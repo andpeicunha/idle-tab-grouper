@@ -78,6 +78,7 @@ async function scanAndGroupTabs(reason: string): Promise<SessionSummary> {
   const now = Date.now();
   const tabs = await chrome.tabs.query({});
   const groups = await chrome.tabGroups.query({});
+  const groupsById = new Map(groups.map(group => [group.id, group]));
   const summary: SessionSummary = {
     movedCount: 0,
     suggestedCount: 0,
@@ -95,6 +96,10 @@ async function scanAndGroupTabs(reason: string): Promise<SessionSummary> {
 
     if (decision.source === "fallback") {
       summary.fallbackCount += 1;
+      continue;
+    }
+
+    if (isAlreadyInCorrectGroup(tab, decision, groupsById)) {
       continue;
     }
 
@@ -148,8 +153,18 @@ function shouldConsiderTab(tab: chrome.tabs.Tab): boolean {
   if (tab.active) return false;
   if (!tab.url) return false;
   if (tab.url.startsWith("chrome://") || tab.url.startsWith("chrome-extension://")) return false;
-  if (tab.groupId !== -1) return false;
   return true;
+}
+
+function isAlreadyInCorrectGroup(
+  tab: chrome.tabs.Tab,
+  decision: TabDecision,
+  groupsById: Map<number, chrome.tabGroups.TabGroup>
+): boolean {
+  if (tab.groupId == null || tab.groupId === -1) return false;
+  const group = groupsById.get(tab.groupId);
+  if (!group) return false;
+  return group.title === decision.title;
 }
 
 async function applyGrouping(tabs: chrome.tabs.Tab[], decision: TabDecision): Promise<boolean> {
