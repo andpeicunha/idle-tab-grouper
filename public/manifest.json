@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Idle Tab Grouper",
-  "version": "0.2.0",
+  "version": "0.2.5",
   "description": "Agrupa abas automaticamente depois de um período de inatividade e recolhe grupos inativos.",
   "permissions": ["tabs", "tabGroups", "storage", "alarms"],
   "action": {

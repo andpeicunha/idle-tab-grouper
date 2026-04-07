@@ -46,92 +46,156 @@ function getAppRoot(): HTMLDivElement {
 }
 
 function render(): void {
+  const statusSummary = latestSession?.lastSummary || null;
+  const currentModeLabel = state.behavior === "auto" ? "Automatico" : "Sugestoes";
+  const strategyLabel = state.strategy === "hybrid" ? "Hibrido" : state.strategy === "subject" ? "Assunto" : "Site";
+
   app.innerHTML = `
     <main class="shell">
-      <section class="hero">
-        <p class="eyebrow">Chrome Extension</p>
-        <h1>Idle Tab Grouper</h1>
-        <p class="lede">Agrupa por alias ou regra, avisa quando cai em fallback e deixa você corrigir grupos na hora.</p>
+      <section class="topbar">
+        <div class="brand-pill">
+          <span class="brand-mark"></span>
+          <span>Idle Tab Grouper</span>
+        </div>
+        <div class="topbar-status">
+          <span class="status-dot"></span>
+          <span>${state.enabled ? "Ativo" : "Pausado"}</span>
+        </div>
       </section>
 
-      <section class="panel">
-        <label class="toggle-row">
-          <span>
-            <strong>Ativar extensão</strong>
-            <small>Quando desligada, a extensão só observa os dados salvos.</small>
-          </span>
-          <input id="enabled" type="checkbox" ${state.enabled ? "checked" : ""} />
-        </label>
-
-        <label>
-          <span>Comportamento</span>
-          <select id="behavior">
-            <option value="auto" ${state.behavior === "auto" ? "selected" : ""}>Mover automaticamente</option>
-            <option value="suggest" ${state.behavior === "suggest" ? "selected" : ""}>Só sugerir</option>
-          </select>
-        </label>
-
-        <label>
-          <span>Estratégia</span>
-          <select id="strategy">
-            <option value="hybrid" ${state.strategy === "hybrid" ? "selected" : ""}>Híbrido</option>
-            <option value="subject" ${state.strategy === "subject" ? "selected" : ""}>Só assunto</option>
-            <option value="site" ${state.strategy === "site" ? "selected" : ""}>Só site</option>
-          </select>
-        </label>
-
-        <label>
-          <span>Inatividade mínima</span>
-          <div class="inline-field">
-            <input id="inactivityMinutes" type="number" min="1" max="60" step="1" value="${state.inactivityMinutes}" />
-            <span>min</span>
+      <section class="panel hero-panel">
+        <div class="hero-copy">
+          <p class="eyebrow">Tab workflow studio</p>
+          <p class="lede hero-lede">Agrupe abas inativas por alias ou assunto, recolha grupos esquecidos e ajuste tudo num painel mais limpo e rapido de operar.</p>
+          <div class="hero-actions">
+            <button id="scan" class="primary">Agrupar agora</button>
+            <button id="save" class="secondary">Salvar ajustes</button>
           </div>
-        </label>
-
-        <label>
-          <span>Mínimo de abas para agrupar</span>
-          <div class="inline-field">
-            <input id="minimumTabsToGroup" type="number" min="2" max="50" step="1" value="${state.minimumTabsToGroup}" />
-            <span>abas</span>
-          </div>
-        </label>
-
-        <label class="toggle-row">
-          <span>
-            <strong>Recolher grupos inativos</strong>
-            <small>Quando todos os tabs do grupo estão parados, o grupo vira uma aba compacta.</small>
-          </span>
-          <input id="collapseInactiveGroups" type="checkbox" ${state.collapseInactiveGroups ? "checked" : ""} />
-        </label>
+        </div>
       </section>
 
-      <section class="panel">
-        <div class="section-head">
+      <section class="stats-grid">
+        <article class="stat-card stat-accent">
+          <span class="stat-label">Modo</span>
+          <strong>${currentModeLabel}</strong>
+          <small>${state.enabled ? "Monitorando abas em segundo plano" : "Sem automacoes ativas"}</small>
+        </article>
+        <article class="stat-card">
+          <span class="stat-label">Janela de idle</span>
+          <strong>${state.inactivityMinutes} min</strong>
+          <small>Estrategia ${strategyLabel.toLowerCase()}</small>
+        </article>
+        <article class="stat-card stat-dark">
+          <span class="stat-label">Grupos vivos</span>
+          <strong>${latestGroups.length}</strong>
+          <small>${formatSummary(statusSummary)}</small>
+        </article>
+      </section>
+
+      <div class="section-kicker">Setup</div>
+      <details class="panel accordion settings-panel">
+        <summary class="accordion-summary">
+          <div>
+            <h2>Motor de agrupamento</h2>
+            <p>Controle o comportamento automatico da extensao.</p>
+          </div>
+          <span class="accordion-indicator" aria-hidden="true"></span>
+        </summary>
+        <div class="accordion-content settings-grid">
+          <label class="field-card toggle-row">
+            <span>
+              <strong>Ativar extensao</strong>
+              <small>Quando desligada, a extensao so observa os dados salvos.</small>
+            </span>
+            <input id="enabled" type="checkbox" ${state.enabled ? "checked" : ""} />
+          </label>
+
+          <label class="field-card">
+            <span>Comportamento</span>
+            <select id="behavior">
+              <option value="auto" ${state.behavior === "auto" ? "selected" : ""}>Mover automaticamente</option>
+              <option value="suggest" ${state.behavior === "suggest" ? "selected" : ""}>So sugerir</option>
+            </select>
+          </label>
+
+          <label class="field-card">
+            <span>Estrategia</span>
+            <select id="strategy">
+              <option value="hybrid" ${state.strategy === "hybrid" ? "selected" : ""}>Hibrido</option>
+              <option value="subject" ${state.strategy === "subject" ? "selected" : ""}>So assunto</option>
+              <option value="site" ${state.strategy === "site" ? "selected" : ""}>So site</option>
+            </select>
+          </label>
+
+          <label class="field-card">
+            <span>Inatividade minima</span>
+            <div class="inline-field">
+              <input id="inactivityMinutes" type="number" min="1" max="60" step="1" value="${state.inactivityMinutes}" />
+              <span>min</span>
+            </div>
+          </label>
+
+          <label class="field-card">
+            <span>Minimo de abas para agrupar</span>
+            <div class="inline-field">
+              <input id="minimumTabsToGroup" type="number" min="2" max="50" step="1" value="${state.minimumTabsToGroup}" />
+              <span>abas</span>
+            </div>
+          </label>
+
+          <label class="field-card toggle-row">
+            <span>
+              <strong>Recolher grupos inativos</strong>
+              <small>Quando todos os tabs do grupo estao parados, o grupo vira um bloco compacto.</small>
+            </span>
+            <input id="collapseInactiveGroups" type="checkbox" ${state.collapseInactiveGroups ? "checked" : ""} />
+          </label>
+        </div>
+      </details>
+
+      <div class="section-kicker">Services</div>
+      <details class="panel accordion">
+        <summary class="accordion-summary">
           <div>
             <h2>Aliases de sites</h2>
-            <p>Ex.: <code>google.com</code> vira <code>Google</code>. Esses nomes viajam com seu Chrome sync.</p>
+            <p>Ex.: <code>google.com</code> vira <code>Google</code>.</p>
           </div>
-          <button id="addAlias" class="secondary">Adicionar alias</button>
+          <span class="accordion-indicator" aria-hidden="true"></span>
+        </summary>
+        <div class="accordion-actions">
+          <button id="addAlias" class="secondary" type="button">Adicionar alias</button>
         </div>
-        <div id="aliases" class="rules"></div>
-      </section>
+        <div id="aliases" class="rules accordion-content"></div>
+      </details>
 
-      <section class="panel">
+      <section class="panel panel-dark">
         <div class="section-head">
           <div>
             <h2>Regras de assunto</h2>
-            <p>Keywords separadas por vírgula. Se baterem com 2 ou mais abas, a extensão agrupa.</p>
+            <p>Keywords separadas por virgula. Se baterem com 2 ou mais abas, a extensao cria o agrupamento.</p>
           </div>
           <button id="addRule" class="secondary">Adicionar regra</button>
         </div>
         <div id="rules" class="rules"></div>
       </section>
 
+      <div class="section-kicker">Live status</div>
+      <section class="panel status-band">
+        <div>
+          <span class="label">Ultima execucao</span>
+          <strong id="lastRunAt">${latestSession?.lastRunAt ? new Date(latestSession.lastRunAt).toLocaleString() : "--"}</strong>
+        </div>
+        <div>
+          <span class="label">Resumo</span>
+          <strong id="lastSummary">${formatSummary(statusSummary)}</strong>
+        </div>
+      </section>
+
       <section class="panel">
         <div class="section-head">
           <div>
             <h2>Grupos atuais</h2>
-            <p>Você pode renomear, recolher ou desagrupar tudo daqui.</p>
+            <p>Renomeie, recolha ou desagrupe tudo daqui sem sair do popup.</p>
           </div>
           <button id="refreshGroups" class="secondary">Atualizar</button>
         </div>
@@ -141,23 +205,7 @@ function render(): void {
         <div id="groups" class="groups"></div>
       </section>
 
-      <section class="actions">
-        <button id="save" class="primary">Salvar</button>
-        <button id="scan" class="secondary">Agrupar agora</button>
-      </section>
-
-      <section class="status">
-        <div>
-          <span class="label">Última execução</span>
-          <strong id="lastRunAt">${latestSession?.lastRunAt ? new Date(latestSession.lastRunAt).toLocaleString() : "--"}</strong>
-        </div>
-        <div>
-          <span class="label">Resumo</span>
-          <strong id="lastSummary">${formatSummary(latestSession?.lastSummary || null)}</strong>
-        </div>
-      </section>
-
-      ${renderFallbackNotice(latestSession?.lastSummary || null)}
+      ${renderFallbackNotice(statusSummary)}
     </main>
   `;
 
