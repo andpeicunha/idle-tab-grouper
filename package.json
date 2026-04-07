@@ -1,0 +1,20 @@
+{
+  "name": "idle-tab-grouper",
+  "private": true,
+  "version": "0.2.0",
+  "description": "Chrome extension that groups tabs after inactivity.",
+  "type": "module",
+  "scripts": {
+    "generate-icons": "node scripts/generate-icons.mjs",
+    "build": "vite build --configLoader runner",
+    "dev": "vite build --watch --configLoader runner",
+    "typecheck": "tsc --noEmit",
+    "check": "npm run typecheck && npm run build"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.268",
+    "@types/node": "^24.2.0",
+    "typescript": "^5.8.3",
+    "vite": "^6.1.0"
+  }
+}
