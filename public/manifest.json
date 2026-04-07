@@ -4,7 +4,6 @@
   "version": "0.2.0",
   "description": "Agrupa abas automaticamente depois de um período de inatividade e recolhe grupos inativos.",
   "permissions": ["tabs", "tabGroups", "storage", "alarms"],
-  "host_permissions": ["<all_urls>"],
   "action": {
     "default_icon": {
       "16": "icons/icon-16.png",
