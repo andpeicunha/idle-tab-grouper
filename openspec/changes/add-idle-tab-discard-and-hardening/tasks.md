@@ -27,16 +27,16 @@
 
 ## 5. Verification
 
-- [ ] 5.1 Verificar defaults de preset e mudanças de threshold em um fluxo de instalação nova.
-- [ ] 5.2 Verificar que abas protegidas nunca são descartadas durante as varreduras de inatividade.
-- [ ] 5.3 Verificar que os analytics de RAM permanecem locais e não são gravados em sync storage.
-- [ ] 5.4 Verificar que o popup lida sem erro com analytics vazios, analytics ativos e histórico retido.
+- [x] 5.1 Verificar defaults de preset e mudanças de threshold em um fluxo de instalação nova.
+- [x] 5.2 Verificar que abas protegidas nunca são descartadas durante as varreduras de inatividade.
+- [x] 5.3 Verificar que os analytics de RAM permanecem locais e não são gravados em sync storage.
+- [x] 5.4 Verificar que o popup lida sem erro com analytics vazios, analytics ativos e histórico retido.
 
 ## 6. Validation discipline
 
-- [ ] 6.1 Derivar os testes principais a partir das regras descritas nas specs, e não a partir dos detalhes da implementação atual.
-- [ ] 6.2 Cobrir cada regra crítica com pelo menos um caso positivo e um caso negativo.
-- [ ] 6.3 Extrair e validar lógica pura sempre que possível, usando mocks apenas nas bordas do runtime do Chrome.
-- [ ] 6.4 Evitar testes que apenas confirmem chamadas mockadas sem validar comportamento observável.
+- [x] 6.1 Derivar os testes principais a partir das regras descritas nas specs, e não a partir dos detalhes da implementação atual.
+- [x] 6.2 Cobrir cada regra crítica com pelo menos um caso positivo e um caso negativo.
+- [x] 6.3 Extrair e validar lógica pura sempre que possível, usando mocks apenas nas bordas do runtime do Chrome.
+- [x] 6.4 Evitar testes que apenas confirmem chamadas mockadas sem validar comportamento observável.
 - [ ] 6.5 Confirmar que regras críticas falham em teste quando a proteção correspondente é removida ou quebrada de propósito.
-- [ ] 6.6 Revisar falhas de teste comparando primeiro spec, comportamento esperado e implementação antes de ajustar o próprio teste.
+- [x] 6.6 Revisar falhas de teste comparando primeiro spec, comportamento esperado e implementação antes de ajustar o próprio teste.

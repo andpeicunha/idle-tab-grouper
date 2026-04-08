@@ -3,12 +3,18 @@ import "./styles/popup.css";
 import { DEFAULT_SETTINGS, OPTIMIZATION_PRESETS } from "./shared/defaults";
 import { createRuleId, fromStoredAliases, fromStoredRules, normalizeDomain, toRuleKeywords } from "./shared/rules";
 import {
-  getOptimizationPresetLabel,
   readRamSavingsAnalytics,
   readSettings,
   readSession,
   writeSettings
 } from "./shared/storage";
+import {
+  optimizationPresetOptions,
+  readRamSavings,
+  resolvePresetIdFromMinutes,
+  toPresetView
+} from "./shared/popup-model";
+import type { RamHistoryPoint } from "./shared/popup-model";
 import type {
   DomainAlias,
   ExtensionSettings,
@@ -17,19 +23,6 @@ import type {
   TabGroupColor,
   TabRule
 } from "./shared/types";
-
-type RamHistoryPoint = {
-  day: string;
-  estimatedMb: number;
-  discardedTabs?: number;
-};
-
-type PopupRamSavings = {
-  estimatedMb: number;
-  history: RamHistoryPoint[];
-  label: string;
-  localOnlyLabel: string;
-};
 
 type GroupSnapshot = {
   collapsed: boolean;
@@ -40,14 +33,6 @@ type GroupSnapshot = {
   windowId: number;
 };
 
-type OptimizationPresetView = {
-  id: OptimizationPreset;
-  label: string;
-  minutes: number;
-  description: string;
-};
-
-const RAM_HISTORY_LIMIT = 7;
 const RAM_NUMBER_FORMAT = new Intl.NumberFormat("pt-BR", {
   maximumFractionDigits: 0
 });
@@ -641,63 +626,6 @@ function formatSummary(summary: Awaited<ReturnType<typeof readSession>>["lastSum
   return `${summary.movedCount} movidas, ${summary.suggestedCount} sugestões, ${summary.collapsedGroupCount} grupos recolhidos, ${summary.fallbackCount} fallback(s), ${summary.pendingCount} pendentes`;
 }
 
-function toPresetView(presetId: OptimizationPreset, minutes?: number): OptimizationPresetView {
-  const preset = OPTIMIZATION_PRESETS.find(item => item.id === presetId);
-  if (preset) {
-    return {
-      id: preset.id,
-      label: preset.label,
-      minutes: preset.inactivityMinutes,
-      description: preset.id === "aggressive" ? "Prioriza descarte rápido" : preset.id === "conservative" ? "Menos agressivo com a sessão" : "Padrão recomendado"
-    };
-  }
-
-  return {
-    id: "custom",
-    label: getOptimizationPresetLabel("custom"),
-    minutes: minutes ?? state.inactivityMinutes,
-    description: "Ajuste manual"
-  };
-}
-
-function optimizationPresetOptions(selected: OptimizationPreset): string {
-  const options = OPTIMIZATION_PRESETS.map(preset => {
-    const view = toPresetView(preset.id);
-    return `<option value="${preset.id}" ${preset.id === selected ? "selected" : ""}>${view.label} · ${view.minutes} min</option>`;
-  }).join("");
-  return `${options}<option value="custom" ${selected === "custom" ? "selected" : ""}>Customizado</option>`;
-}
-
-function resolvePresetIdFromMinutes(minutes: number): OptimizationPreset {
-  return OPTIMIZATION_PRESETS.find(item => item.inactivityMinutes === minutes)?.id ?? "custom";
-}
-
-function readRamSavings(analytics: RamSavingsAnalyticsState | null): PopupRamSavings {
-  const fallback: PopupRamSavings = {
-    estimatedMb: 0,
-    history: [],
-    label: "Nenhuma estimativa ainda. O histórico local vai aparecer quando houver descartes.",
-    localOnlyLabel: "Estimativa local, sem sync"
-  };
-
-  if (!analytics) return fallback;
-
-  const history = analytics.days.slice(-RAM_HISTORY_LIMIT).map(day => ({
-    day: day.date,
-    estimatedMb: day.estimatedRamSavedMb,
-    discardedTabs: day.discardedCount
-  }));
-  const estimatedMb = analytics.days.reduce((total, day) => total + day.estimatedRamSavedMb, 0);
-  return {
-    estimatedMb,
-    history,
-    label:
-      history.length > 0
-        ? `Histórico local de ${history.length} dia(s) com retenção de ${analytics.retentionDays} dia(s).`
-        : fallback.label,
-    localOnlyLabel: "Estimativa local, sem sync"
-  };
-}
 
 function formatMb(value: number): string {
   return `${RAM_NUMBER_FORMAT.format(Math.max(0, Math.round(value)))} MB`;

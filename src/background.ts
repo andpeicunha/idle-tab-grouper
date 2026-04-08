@@ -1,3 +1,4 @@
+import { canDiscardWithSettings, shouldConsiderTab, shouldDiscardTab } from "./shared/optimization";
 import { classifyTab, isIdle } from "./shared/rules";
 import {
   ensureRamSavingsAnalytics,
@@ -12,8 +13,6 @@ import type { TabDecision } from "./shared/rules";
 
 const DEFAULT_ALARM_NAME = "scan-idle-tabs";
 const SCAN_INTERVAL_MINUTES = 1;
-const INTERNAL_URL_PREFIXES = ["chrome://", "chrome-extension://"] as const;
-
 chrome.runtime.onInstalled.addListener(async () => {
   await ensureSettings();
   await ensureRamSavingsAnalytics();
@@ -104,7 +103,7 @@ async function scanAndGroupTabs(reason: string): Promise<SessionSummary> {
     if (!isIdle(tab, now, settings.inactivityMinutes)) continue;
 
     const decision = classifyTab(tab, settings);
-    const canDiscard = settings.discardEnabled && settings.behavior === "auto" && shouldDiscardTab(tab);
+    const canDiscard = canDiscardWithSettings(tab, settings);
 
     if (decision.source === "fallback") {
       summary.fallbackCount += 1;
@@ -179,26 +178,6 @@ async function scanAndGroupTabs(reason: string): Promise<SessionSummary> {
   await updateAlertBadge(summary.fallbackCount + summary.pendingCount);
   await persistSummary(reason, summary);
   return summary;
-}
-
-function shouldConsiderTab(tab: chrome.tabs.Tab): boolean {
-  if (tab.id == null || tab.windowId == null) return false;
-  if (tab.pinned) return false;
-  if (tab.active) return false;
-  if (tab.discarded) return false;
-  if (!tab.url) return false;
-  if (isProtectedInternalUrl(tab.url)) return false;
-  return true;
-}
-
-function shouldDiscardTab(tab: chrome.tabs.Tab): boolean {
-  if (tab.active) return false;
-  if (tab.pinned) return false;
-  if (tab.audible) return false;
-  if (tab.discarded) return false;
-  if (!tab.url) return false;
-  if (isProtectedInternalUrl(tab.url)) return false;
-  return true;
 }
 
 function isAlreadyInCorrectGroup(
@@ -324,8 +303,4 @@ async function discardIdleTabs(tabs: chrome.tabs.Tab[]): Promise<number> {
   }
 
   return discardedCount;
-}
-
-function isProtectedInternalUrl(url: string): boolean {
-  return INTERNAL_URL_PREFIXES.some(prefix => url.startsWith(prefix));
 }

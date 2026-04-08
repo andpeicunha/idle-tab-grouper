@@ -79,7 +79,7 @@ export function normalizeSettings(storedSettings: Partial<ExtensionSettings> | u
     ...(storedSettings || {})
   };
   const inactivityMinutes = normalizePositiveInteger(merged.inactivityMinutes, DEFAULT_SETTINGS.inactivityMinutes, 1);
-  const optimizationPreset = normalizeOptimizationPreset(merged.optimizationPreset, inactivityMinutes);
+  const optimizationPreset = normalizeOptimizationPreset(storedSettings?.optimizationPreset, inactivityMinutes);
   const minimumTabsToGroup = normalizePositiveInteger(merged.minimumTabsToGroup, DEFAULT_SETTINGS.minimumTabsToGroup, 2);
   const estimatedRamPerDiscardMb = normalizePositiveInteger(
     merged.estimatedRamPerDiscardMb,
@@ -199,8 +199,15 @@ export function pruneRamSavingsAnalytics(
 }
 
 function normalizeOptimizationPreset(value: unknown, inactivityMinutes: number): OptimizationPreset {
-  if (value === "aggressive" || value === "balanced" || value === "conservative" || value === "custom") {
-    return value;
+  if (value === "custom") {
+    return "custom";
+  }
+
+  if (value === "aggressive" || value === "balanced" || value === "conservative") {
+    const selectedPreset = OPTIMIZATION_PRESETS.find(option => option.id === value);
+    if (selectedPreset?.inactivityMinutes === inactivityMinutes) {
+      return value;
+    }
   }
 
   const matchedPreset = OPTIMIZATION_PRESETS.find(option => option.inactivityMinutes === inactivityMinutes);

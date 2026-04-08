@@ -33,6 +33,7 @@ function syncManifestVersion() {
 
 export default defineConfig({
   base: "./",
+  cacheDir: ".vite-temp",
   plugins: [syncManifestVersion()],
   build: {
     outDir: "dist",
