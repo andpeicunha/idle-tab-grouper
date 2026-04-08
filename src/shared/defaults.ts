@@ -1,4 +1,38 @@
-import type { DomainAlias, ExtensionSettings, TabRule } from "./types";
+import type {
+  DomainAlias,
+  ExtensionSettings,
+  OptimizationPresetConfig,
+  RamSavingsAnalyticsState,
+  TabRule
+} from "./types";
+
+export const OPTIMIZATION_PRESETS: ReadonlyArray<OptimizationPresetConfig> = [
+  {
+    id: "aggressive",
+    label: "Agressivo",
+    inactivityMinutes: 2
+  },
+  {
+    id: "balanced",
+    label: "Equilibrado",
+    inactivityMinutes: 5
+  },
+  {
+    id: "conservative",
+    label: "Conservador",
+    inactivityMinutes: 10
+  }
+];
+
+export const DEFAULT_OPTIMIZATION_PRESET: OptimizationPresetConfig["id"] = "balanced";
+export const DEFAULT_ESTIMATED_RAM_PER_DISCARD_MB = 50;
+export const DEFAULT_RAM_SAVINGS_RETENTION_DAYS = 7;
+
+export const DEFAULT_RAM_SAVINGS_ANALYTICS: RamSavingsAnalyticsState = {
+  version: 1,
+  retentionDays: DEFAULT_RAM_SAVINGS_RETENTION_DAYS,
+  days: []
+};
 
 export const PRESET_RULES: ReadonlyArray<Omit<TabRule, "id">> = [
   {
@@ -42,9 +76,13 @@ export const DEFAULT_SETTINGS: ExtensionSettings = {
   enabled: true,
   behavior: "auto",
   strategy: "hybrid",
-  inactivityMinutes: 3,
+  optimizationPreset: DEFAULT_OPTIMIZATION_PRESET,
+  inactivityMinutes: 5,
   minimumTabsToGroup: 2,
   collapseInactiveGroups: true,
+  discardEnabled: true,
+  estimatedRamPerDiscardMb: DEFAULT_ESTIMATED_RAM_PER_DISCARD_MB,
+  ramSavingsRetentionDays: DEFAULT_RAM_SAVINGS_RETENTION_DAYS,
   domainAliases: PRESET_ALIASES.map(alias => ({
     id: alias.domain,
     ...alias

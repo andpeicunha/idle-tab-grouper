@@ -1,9 +1,35 @@
 import "./styles/popup.css";
 
-import { DEFAULT_SETTINGS } from "./shared/defaults";
+import { DEFAULT_SETTINGS, OPTIMIZATION_PRESETS } from "./shared/defaults";
 import { createRuleId, fromStoredAliases, fromStoredRules, normalizeDomain, toRuleKeywords } from "./shared/rules";
-import { readSettings, readSession, writeSettings } from "./shared/storage";
-import type { DomainAlias, ExtensionSettings, TabGroupColor, TabRule } from "./shared/types";
+import {
+  getOptimizationPresetLabel,
+  readRamSavingsAnalytics,
+  readSettings,
+  readSession,
+  writeSettings
+} from "./shared/storage";
+import type {
+  DomainAlias,
+  ExtensionSettings,
+  OptimizationPreset,
+  RamSavingsAnalyticsState,
+  TabGroupColor,
+  TabRule
+} from "./shared/types";
+
+type RamHistoryPoint = {
+  day: string;
+  estimatedMb: number;
+  discardedTabs?: number;
+};
+
+type PopupRamSavings = {
+  estimatedMb: number;
+  history: RamHistoryPoint[];
+  label: string;
+  localOnlyLabel: string;
+};
 
 type GroupSnapshot = {
   collapsed: boolean;
@@ -14,11 +40,24 @@ type GroupSnapshot = {
   windowId: number;
 };
 
+type OptimizationPresetView = {
+  id: OptimizationPreset;
+  label: string;
+  minutes: number;
+  description: string;
+};
+
+const RAM_HISTORY_LIMIT = 7;
+const RAM_NUMBER_FORMAT = new Intl.NumberFormat("pt-BR", {
+  maximumFractionDigits: 0
+});
+
 const app = getAppRoot();
 
 let state: ExtensionSettings = { ...DEFAULT_SETTINGS };
 let latestSession: Awaited<ReturnType<typeof readSession>> | null = null;
 let latestGroups: GroupSnapshot[] = [];
+let latestRamSavings: RamSavingsAnalyticsState | null = null;
 
 init().catch(error => {
   console.error("Failed to init popup", error);
@@ -26,7 +65,12 @@ init().catch(error => {
 });
 
 async function init(): Promise<void> {
-  const [settings, session, groups] = await Promise.all([readSettings(), readSession(), loadGroupSnapshot()]);
+  const [settings, session, groups, ramSavings] = await Promise.all([
+    readSettings(),
+    readSession(),
+    loadGroupSnapshot(),
+    readRamSavingsAnalytics()
+  ]);
   state = {
     ...settings,
     domainAliases: fromStoredAliases(settings.domainAliases),
@@ -34,6 +78,7 @@ async function init(): Promise<void> {
   };
   latestSession = session;
   latestGroups = groups;
+  latestRamSavings = ramSavings;
   render();
 }
 
@@ -48,7 +93,8 @@ function getAppRoot(): HTMLDivElement {
 function render(): void {
   const statusSummary = latestSession?.lastSummary || null;
   const currentModeLabel = state.behavior === "auto" ? "Automatico" : "Sugestoes";
-  const strategyLabel = state.strategy === "hybrid" ? "Hibrido" : state.strategy === "subject" ? "Assunto" : "Site";
+  const preset = toPresetView(state.optimizationPreset, state.inactivityMinutes);
+  const ramSavings = readRamSavings(latestRamSavings);
 
   app.innerHTML = `
     <main class="shell">
@@ -66,7 +112,7 @@ function render(): void {
       <section class="panel hero-panel">
         <div class="hero-copy">
           <p class="eyebrow">Tab workflow studio</p>
-          <p class="lede hero-lede">Agrupe abas inativas por alias ou assunto, recolha grupos esquecidos e ajuste tudo num painel mais limpo e rapido de operar.</p>
+          <p class="lede hero-lede">Agrupe abas inativas por alias ou assunto, descarte as ociosas com segurança e acompanhe a economia estimada de RAM em um painel leve.</p>
           <div class="hero-actions">
             <button id="scan" class="primary">Agrupar agora</button>
             <button id="save" class="secondary">Salvar ajustes</button>
@@ -81,14 +127,14 @@ function render(): void {
           <small>${state.enabled ? "Monitorando abas em segundo plano" : "Sem automacoes ativas"}</small>
         </article>
         <article class="stat-card">
-          <span class="stat-label">Janela de idle</span>
-          <strong>${state.inactivityMinutes} min</strong>
-          <small>Estrategia ${strategyLabel.toLowerCase()}</small>
+          <span class="stat-label">Preset</span>
+          <strong>${preset.label}</strong>
+          <small>${preset.minutes} min · ${preset.description}</small>
         </article>
         <article class="stat-card stat-dark">
-          <span class="stat-label">Grupos vivos</span>
-          <strong>${latestGroups.length}</strong>
-          <small>${formatSummary(statusSummary)}</small>
+          <span class="stat-label">RAM estimada</span>
+          <strong>${formatMb(ramSavings.estimatedMb)}</strong>
+          <small>${ramSavings.localOnlyLabel}</small>
         </article>
       </section>
 
@@ -125,6 +171,14 @@ function render(): void {
               <option value="subject" ${state.strategy === "subject" ? "selected" : ""}>So assunto</option>
               <option value="site" ${state.strategy === "site" ? "selected" : ""}>So site</option>
             </select>
+          </label>
+
+          <label class="field-card">
+            <span>Modo de economia</span>
+            <select id="optimizationPreset">
+              ${optimizationPresetOptions(state.optimizationPreset)}
+            </select>
+            <small>O threshold único ajusta agrupamento e descarte ao mesmo tempo.</small>
           </label>
 
           <label class="field-card">
@@ -191,6 +245,29 @@ function render(): void {
         </div>
       </section>
 
+      <section class="panel ram-panel">
+        <div class="section-head">
+          <div>
+            <h2>Economia de RAM</h2>
+            <p>Estimativa local baseada nas abas descarregadas recentemente. Nenhum dado sai do dispositivo.</p>
+          </div>
+          <span class="ram-pill">Local only</span>
+        </div>
+        <div class="ram-summary">
+          <div class="ram-summary-primary">
+            <span class="label">Total estimado</span>
+            <strong>${formatMb(ramSavings.estimatedMb)}</strong>
+            <small>${ramSavings.label}</small>
+          </div>
+          <div class="ram-summary-secondary">
+            <span class="label">Preset ativo</span>
+            <strong>${preset.label}</strong>
+            <small>${preset.minutes} min · ${preset.description}</small>
+          </div>
+        </div>
+        ${renderRamHistory(ramSavings.history)}
+      </section>
+
       <section class="panel">
         <div class="section-head">
           <div>
@@ -221,6 +298,18 @@ function bindGeneralInputs(): void {
   bindCheckbox("enabled", checked => {
     state.enabled = checked;
   });
+  bindSelect("optimizationPreset", value => {
+    const preset = OPTIMIZATION_PRESETS.find(item => item.id === value);
+    if (preset) {
+      state.optimizationPreset = preset.id;
+      state.inactivityMinutes = preset.inactivityMinutes;
+      syncInactivityInput(preset.inactivityMinutes);
+      return;
+    }
+
+    state.optimizationPreset = "custom";
+    syncPresetSelect("custom");
+  });
   bindSelect("behavior", value => {
     state.behavior = value as ExtensionSettings["behavior"];
   });
@@ -229,6 +318,9 @@ function bindGeneralInputs(): void {
   });
   bindNumber("inactivityMinutes", value => {
     state.inactivityMinutes = value;
+    state.optimizationPreset = resolvePresetIdFromMinutes(value);
+    syncPresetSelect(state.optimizationPreset);
+    syncInactivityInput(value);
   });
   bindNumber("minimumTabsToGroup", value => {
     state.minimumTabsToGroup = Math.max(2, value);
@@ -290,6 +382,7 @@ function bindActions(): void {
     state.domainAliases = readAliasesFromDom();
     state.customRules = readRulesFromDom();
     await writeSettings(state);
+    latestRamSavings = await readRamSavingsAnalytics();
     await flashButton(saveButton, "Salvo");
   });
 
@@ -299,6 +392,7 @@ function bindActions(): void {
     await writeSettings(state);
     await chrome.runtime.sendMessage({ type: "idle-tab-grouper:scan-now" });
     latestSession = await readSession();
+    latestRamSavings = await readRamSavingsAnalytics();
     latestGroups = await loadGroupSnapshot();
     render();
     const refreshedScanButton = document.querySelector<HTMLButtonElement>("#scan");
@@ -523,6 +617,18 @@ function bindNumber(id: string, onChange: (value: number) => void): void {
   input.addEventListener("change", () => onChange(Number(input.value || 3)));
 }
 
+function syncPresetSelect(presetId: OptimizationPreset): void {
+  const presetSelect = document.querySelector<HTMLSelectElement>("#optimizationPreset");
+  if (!presetSelect) return;
+  presetSelect.value = presetId;
+}
+
+function syncInactivityInput(minutes: number): void {
+  const inactivityInput = document.querySelector<HTMLInputElement>("#inactivityMinutes");
+  if (!inactivityInput) return;
+  inactivityInput.value = String(minutes);
+}
+
 function colorOptions(selected: TabGroupColor): string {
   const colors: TabGroupColor[] = ["grey", "blue", "cyan", "green", "yellow", "orange", "red", "pink", "purple"];
   return colors
@@ -533,6 +639,101 @@ function colorOptions(selected: TabGroupColor): string {
 function formatSummary(summary: Awaited<ReturnType<typeof readSession>>["lastSummary"] | null): string {
   if (!summary) return "--";
   return `${summary.movedCount} movidas, ${summary.suggestedCount} sugestões, ${summary.collapsedGroupCount} grupos recolhidos, ${summary.fallbackCount} fallback(s), ${summary.pendingCount} pendentes`;
+}
+
+function toPresetView(presetId: OptimizationPreset, minutes?: number): OptimizationPresetView {
+  const preset = OPTIMIZATION_PRESETS.find(item => item.id === presetId);
+  if (preset) {
+    return {
+      id: preset.id,
+      label: preset.label,
+      minutes: preset.inactivityMinutes,
+      description: preset.id === "aggressive" ? "Prioriza descarte rápido" : preset.id === "conservative" ? "Menos agressivo com a sessão" : "Padrão recomendado"
+    };
+  }
+
+  return {
+    id: "custom",
+    label: getOptimizationPresetLabel("custom"),
+    minutes: minutes ?? state.inactivityMinutes,
+    description: "Ajuste manual"
+  };
+}
+
+function optimizationPresetOptions(selected: OptimizationPreset): string {
+  const options = OPTIMIZATION_PRESETS.map(preset => {
+    const view = toPresetView(preset.id);
+    return `<option value="${preset.id}" ${preset.id === selected ? "selected" : ""}>${view.label} · ${view.minutes} min</option>`;
+  }).join("");
+  return `${options}<option value="custom" ${selected === "custom" ? "selected" : ""}>Customizado</option>`;
+}
+
+function resolvePresetIdFromMinutes(minutes: number): OptimizationPreset {
+  return OPTIMIZATION_PRESETS.find(item => item.inactivityMinutes === minutes)?.id ?? "custom";
+}
+
+function readRamSavings(analytics: RamSavingsAnalyticsState | null): PopupRamSavings {
+  const fallback: PopupRamSavings = {
+    estimatedMb: 0,
+    history: [],
+    label: "Nenhuma estimativa ainda. O histórico local vai aparecer quando houver descartes.",
+    localOnlyLabel: "Estimativa local, sem sync"
+  };
+
+  if (!analytics) return fallback;
+
+  const history = analytics.days.slice(-RAM_HISTORY_LIMIT).map(day => ({
+    day: day.date,
+    estimatedMb: day.estimatedRamSavedMb,
+    discardedTabs: day.discardedCount
+  }));
+  const estimatedMb = analytics.days.reduce((total, day) => total + day.estimatedRamSavedMb, 0);
+  return {
+    estimatedMb,
+    history,
+    label:
+      history.length > 0
+        ? `Histórico local de ${history.length} dia(s) com retenção de ${analytics.retentionDays} dia(s).`
+        : fallback.label,
+    localOnlyLabel: "Estimativa local, sem sync"
+  };
+}
+
+function formatMb(value: number): string {
+  return `${RAM_NUMBER_FORMAT.format(Math.max(0, Math.round(value)))} MB`;
+}
+
+function renderRamHistory(history: RamHistoryPoint[]): string {
+  if (history.length === 0) {
+    return `
+      <div class="empty-state ram-empty">
+        Nenhum dado local ainda. Quando abas forem descartadas, a economia estimada aparece aqui sem sair do dispositivo.
+      </div>
+    `;
+  }
+
+  const maxValue = Math.max(...history.map(point => point.estimatedMb), 1);
+  return `
+    <div class="ram-history">
+      ${history
+        .map(point => {
+          const width = Math.max(6, Math.round((point.estimatedMb / maxValue) * 100));
+          const suffix = Number.isFinite(point.discardedTabs) ? ` · ${point.discardedTabs} aba(s)` : "";
+          return `
+            <div class="ram-history-row">
+              <div class="ram-history-meta">
+                <strong>${escapeHtml(point.day)}</strong>
+                <small>${formatMb(point.estimatedMb)}${escapeHtml(suffix)}</small>
+              </div>
+              <div class="ram-history-track" aria-hidden="true">
+                <span class="ram-history-fill" style="width:${width}%"></span>
+              </div>
+            </div>
+          `;
+        })
+        .join("")}
+    </div>
+  `;
 }
 
 function renderFallbackNotice(summary: Awaited<ReturnType<typeof readSession>>["lastSummary"] | null): string {

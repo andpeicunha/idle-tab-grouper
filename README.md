@@ -1,12 +1,14 @@
 # Idle Tab Grouper
 
-Extensão Chrome em `TypeScript + Vite` para agrupar abas automaticamente depois de ficarem inativas por um tempo.
+Extensão Chrome em `TypeScript + Vite` para agrupar e descartar abas automaticamente depois de ficarem inativas por um tempo.
 
 ## O que ela faz
 
 - Agrupa por alias de site e por palavras-chave de assunto
+- Descarta abas ociosas com um threshold único de otimização
 - Nunca cria grupo com apenas 1 aba
 - Recolhe grupos inativos para economizar espaço
+- Mostra economia estimada de RAM usando apenas dados locais
 - Mostra uma notificação no ícone quando precisa cair para fallback
 - Permite renomear, recolher e desagrupar grupos manualmente
 - Permite alternar entre:
@@ -34,6 +36,7 @@ Para desenvolvimento contínuo:
 - `behavior`: muda entre mover automaticamente e só sugerir
 - `strategy`: escolhe entre `hybrid`, `subject` e `site`
 - `inactivityMinutes`: define quanto tempo a aba precisa ficar sem foco
+- `optimizationPreset`: alterna entre `Agressivo`, `Equilibrado` e `Conservador`
 - `minimumTabsToGroup`: define o mínimo de abas para formar grupo
 - `collapseInactiveGroups`: recolhe grupos com todos os tabs inativos
 - `Aliases de sites`: troca `google.com` por `Google`, `clickup.com` por `ClickUp` e assim por diante

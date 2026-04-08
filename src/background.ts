@@ -1,19 +1,29 @@
 import { classifyTab, isIdle } from "./shared/rules";
-import { ensureSettings, readSettings, readSession, writeSession } from "./shared/storage";
+import {
+  ensureRamSavingsAnalytics,
+  ensureSettings,
+  readSettings,
+  readSession,
+  recordRamSavings,
+  writeSession
+} from "./shared/storage";
 import type { SessionState, SessionSummary } from "./shared/types";
 import type { TabDecision } from "./shared/rules";
 
 const DEFAULT_ALARM_NAME = "scan-idle-tabs";
 const SCAN_INTERVAL_MINUTES = 1;
+const INTERNAL_URL_PREFIXES = ["chrome://", "chrome-extension://"] as const;
 
 chrome.runtime.onInstalled.addListener(async () => {
   await ensureSettings();
+  await ensureRamSavingsAnalytics();
   await ensureAlarm();
   await scanAndGroupTabs("install");
 });
 
 chrome.runtime.onStartup.addListener(async () => {
   await ensureSettings();
+  await ensureRamSavingsAnalytics();
   await ensureAlarm();
 });
 
@@ -87,19 +97,27 @@ async function scanAndGroupTabs(reason: string): Promise<SessionSummary> {
     pendingCount: 0
   };
   const buckets = new Map<string, { decision: TabDecision; tabs: chrome.tabs.Tab[] }>();
+  const discardCandidates: chrome.tabs.Tab[] = [];
 
   for (const tab of tabs) {
     if (!shouldConsiderTab(tab)) continue;
     if (!isIdle(tab, now, settings.inactivityMinutes)) continue;
 
     const decision = classifyTab(tab, settings);
+    const canDiscard = settings.discardEnabled && settings.behavior === "auto" && shouldDiscardTab(tab);
 
     if (decision.source === "fallback") {
       summary.fallbackCount += 1;
+      if (canDiscard) {
+        discardCandidates.push(tab);
+      }
       continue;
     }
 
     if (isAlreadyInCorrectGroup(tab, decision, groupsById)) {
+      if (canDiscard) {
+        discardCandidates.push(tab);
+      }
       continue;
     }
 
@@ -112,6 +130,10 @@ async function scanAndGroupTabs(reason: string): Promise<SessionSummary> {
         decision,
         tabs: [tab]
       });
+    }
+
+    if (canDiscard) {
+      discardCandidates.push(tab);
     }
   }
 
@@ -142,6 +164,18 @@ async function scanAndGroupTabs(reason: string): Promise<SessionSummary> {
     summary.collapsedGroupCount = await collapseIdleGroups(tabs, groups, settings.inactivityMinutes, now);
   }
 
+  const discardedCount = await discardIdleTabs(discardCandidates);
+  if (discardedCount > 0) {
+    await recordRamSavings({
+      discardedCount,
+      estimatedRamSavedMb: discardedCount * settings.estimatedRamPerDiscardMb,
+      retentionDays: settings.ramSavingsRetentionDays
+    });
+    for (const tab of discardCandidates) {
+      await clearSuggestionBadge(tab.id);
+    }
+  }
+
   await updateAlertBadge(summary.fallbackCount + summary.pendingCount);
   await persistSummary(reason, summary);
   return summary;
@@ -151,8 +185,19 @@ function shouldConsiderTab(tab: chrome.tabs.Tab): boolean {
   if (tab.id == null || tab.windowId == null) return false;
   if (tab.pinned) return false;
   if (tab.active) return false;
+  if (tab.discarded) return false;
   if (!tab.url) return false;
-  if (tab.url.startsWith("chrome://") || tab.url.startsWith("chrome-extension://")) return false;
+  if (isProtectedInternalUrl(tab.url)) return false;
+  return true;
+}
+
+function shouldDiscardTab(tab: chrome.tabs.Tab): boolean {
+  if (tab.active) return false;
+  if (tab.pinned) return false;
+  if (tab.audible) return false;
+  if (tab.discarded) return false;
+  if (!tab.url) return false;
+  if (isProtectedInternalUrl(tab.url)) return false;
   return true;
 }
 
@@ -256,4 +301,31 @@ async function persistSummary(reason: string, summary: SessionSummary): Promise<
     lastSummary: summary
   };
   await writeSession(session);
+}
+
+async function discardIdleTabs(tabs: chrome.tabs.Tab[]): Promise<number> {
+  let discardedCount = 0;
+
+  for (const tab of tabs) {
+    if (tab.id == null) continue;
+
+    if (!shouldDiscardTab(tab)) {
+      continue;
+    }
+
+    try {
+      const discardedTab = await chrome.tabs.discard(tab.id);
+      if (discardedTab?.discarded) {
+        discardedCount += 1;
+      }
+    } catch (error) {
+      console.error("Failed to discard idle tab", error, tab.id);
+    }
+  }
+
+  return discardedCount;
+}
+
+function isProtectedInternalUrl(url: string): boolean {
+  return INTERNAL_URL_PREFIXES.some(prefix => url.startsWith(prefix));
 }

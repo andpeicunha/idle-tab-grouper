@@ -2,8 +2,8 @@ node_modules
 .DS_Store
 .idea
 .vscode
-.codex
 dist
+dist/.codex
 coverage
 *.zip
 .playwright*
