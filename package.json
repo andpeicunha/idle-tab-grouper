@@ -8,6 +8,7 @@
     "generate-icons": "node scripts/generate-icons.mjs",
     "build": "vite build --configLoader runner",
     "dev": "vite build --watch --configLoader runner",
+    "package": "node scripts/package-extension.mjs",
     "test": "vitest run --configLoader runner",
     "test:watch": "vitest --configLoader runner",
     "typecheck": "tsc --noEmit",
