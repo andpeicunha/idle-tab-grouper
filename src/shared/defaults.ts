@@ -87,5 +87,6 @@ export const DEFAULT_SETTINGS: ExtensionSettings = {
     id: alias.domain,
     ...alias
   })),
-  customRules: []
+  customRules: [],
+  siteDiscardOverrides: []
 };

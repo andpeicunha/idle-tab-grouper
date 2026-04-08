@@ -4,7 +4,7 @@ import {
   DEFAULT_SETTINGS,
   OPTIMIZATION_PRESETS
 } from "./defaults";
-import { fromStoredAliases, fromStoredRules } from "./rules";
+import { fromStoredAliases, fromStoredDiscardOverrides, fromStoredRules } from "./rules";
 import type {
   ExtensionSettings,
   OptimizationPreset,
@@ -101,7 +101,10 @@ export function normalizeSettings(storedSettings: Partial<ExtensionSettings> | u
     strategy: merged.strategy === "subject" || merged.strategy === "site" ? merged.strategy : "hybrid",
     collapseInactiveGroups: Boolean(merged.collapseInactiveGroups),
     domainAliases: fromStoredAliases(Array.isArray(merged.domainAliases) ? merged.domainAliases : []),
-    customRules: fromStoredRules(Array.isArray(merged.customRules) ? merged.customRules : [])
+    customRules: fromStoredRules(Array.isArray(merged.customRules) ? merged.customRules : []),
+    siteDiscardOverrides: fromStoredDiscardOverrides(
+      Array.isArray(merged.siteDiscardOverrides) ? merged.siteDiscardOverrides : []
+    )
   };
 }
 

@@ -1,0 +1,843 @@
+import "./styles/popup.css";
+
+import { DEFAULT_SETTINGS, OPTIMIZATION_PRESETS } from "./shared/defaults";
+import { createRuleId, fromStoredAliases, fromStoredRules, normalizeDomain, toRuleKeywords } from "./shared/rules";
+import {
+  readRamSavingsAnalytics,
+  readSettings,
+  readSession,
+  writeSettings
+} from "./shared/storage";
+import {
+  optimizationPresetOptions,
+  readRamSavings,
+  resolvePresetIdFromMinutes,
+  toPresetView
+} from "./shared/popup-model";
+import type { RamHistoryPoint } from "./shared/popup-model";
+import type {
+  DomainAlias,
+  ExtensionSettings,
+  OptimizationPreset,
+  RamSavingsAnalyticsState,
+  SiteDiscardOverride,
+  TabGroupColor,
+  TabRule
+} from "./shared/types";
+
+type GroupSnapshot = {
+  collapsed: boolean;
+  color: TabGroupColor;
+  id: number;
+  tabCount: number;
+  title: string;
+  windowId: number;
+};
+
+const RAM_NUMBER_FORMAT = new Intl.NumberFormat("pt-BR", {
+  maximumFractionDigits: 0
+});
+
+const app = getAppRoot();
+
+let state: ExtensionSettings = { ...DEFAULT_SETTINGS };
+let latestSession: Awaited<ReturnType<typeof readSession>> | null = null;
+let latestGroups: GroupSnapshot[] = [];
+let latestRamSavings: RamSavingsAnalyticsState | null = null;
+
+init().catch(error => {
+  console.error("Failed to init options page", error);
+  app.innerHTML = `<div class="error">Falha ao carregar a extensão: ${String(error instanceof Error ? error.message : error)}</div>`;
+});
+
+async function init(): Promise<void> {
+  const [settings, session, groups, ramSavings] = await Promise.all([
+    readSettings(),
+    readSession(),
+    loadGroupSnapshot(),
+    readRamSavingsAnalytics()
+  ]);
+  state = {
+    ...settings,
+    domainAliases: fromStoredAliases(settings.domainAliases),
+    customRules: fromStoredRules(settings.customRules)
+  };
+  latestSession = session;
+  latestGroups = groups;
+  latestRamSavings = ramSavings;
+  render();
+}
+
+function getAppRoot(): HTMLDivElement {
+  const element = document.querySelector<HTMLDivElement>("#app");
+  if (!element) {
+    throw new Error("Options app container not found");
+  }
+  return element;
+}
+
+function render(): void {
+  const statusSummary = latestSession?.lastSummary || null;
+  const currentModeLabel = state.behavior === "auto" ? "Automatico" : "Sugestoes";
+  const preset = toPresetView(state.optimizationPreset, state.inactivityMinutes);
+  const ramSavings = readRamSavings(latestRamSavings);
+
+  app.innerHTML = `
+    <main class="shell shell-page">
+      <section class="topbar">
+        <div class="brand-pill">
+          <span class="brand-mark"></span>
+          <span>Idle Tab Grouper</span>
+        </div>
+        <div class="topbar-status">
+          <span class="status-dot"></span>
+          <span>${state.enabled ? "Ativo" : "Pausado"}</span>
+        </div>
+      </section>
+
+      <section class="panel hero-panel hero-panel-wide">
+        <div class="hero-copy">
+          <p class="eyebrow">Settings workspace</p>
+          <p class="lede hero-lede">Configure agrupamento, aliases, regras e a política de inatividade com mais espaço e menos aperto que no popup.</p>
+          <div class="hero-actions">
+            <button id="scan" class="primary">Agrupar agora</button>
+            <button id="save" class="secondary">Salvar ajustes</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="stats-grid">
+        <article class="stat-card stat-accent">
+          <span class="stat-label">Modo</span>
+          <strong>${currentModeLabel}</strong>
+          <small>${state.enabled ? "Monitorando abas em segundo plano" : "Sem automacoes ativas"}</small>
+        </article>
+        <article class="stat-card">
+          <span class="stat-label">Preset</span>
+          <strong>${preset.label}</strong>
+          <small>${preset.minutes} min · ${preset.description}</small>
+        </article>
+        <article class="stat-card stat-dark">
+          <span class="stat-label">RAM estimada</span>
+          <strong>${formatMb(ramSavings.estimatedMb)}</strong>
+          <small>${ramSavings.localOnlyLabel}</small>
+        </article>
+      </section>
+
+      <div class="section-kicker">Setup</div>
+      <details class="panel accordion settings-panel" open>
+        <summary class="accordion-summary">
+          <div>
+            <h2>Motor de agrupamento</h2>
+            <p>Controle o comportamento automatico da extensao.</p>
+          </div>
+          <span class="accordion-indicator" aria-hidden="true"></span>
+        </summary>
+        <div class="accordion-content settings-grid">
+          <label class="field-card toggle-row">
+            <span>
+              <strong>Ativar extensao</strong>
+              <small>Quando desligada, a extensao so observa os dados salvos.</small>
+            </span>
+            <input id="enabled" type="checkbox" ${state.enabled ? "checked" : ""} />
+          </label>
+
+          <label class="field-card">
+            <span>Comportamento</span>
+            <select id="behavior">
+              <option value="auto" ${state.behavior === "auto" ? "selected" : ""}>Mover automaticamente</option>
+              <option value="suggest" ${state.behavior === "suggest" ? "selected" : ""}>So sugerir</option>
+            </select>
+          </label>
+
+          <label class="field-card">
+            <span>Estrategia</span>
+            <select id="strategy">
+              <option value="hybrid" ${state.strategy === "hybrid" ? "selected" : ""}>Hibrido</option>
+              <option value="subject" ${state.strategy === "subject" ? "selected" : ""}>So assunto</option>
+              <option value="site" ${state.strategy === "site" ? "selected" : ""}>So site</option>
+            </select>
+          </label>
+
+          <label class="field-card">
+            <span>Modo de economia</span>
+            <select id="optimizationPreset">
+              ${optimizationPresetOptions(state.optimizationPreset)}
+            </select>
+            <small>O threshold único ajusta agrupamento e descarte ao mesmo tempo.</small>
+          </label>
+
+          <label class="field-card">
+            <span>Inatividade minima</span>
+            <div class="inline-field">
+              <input id="inactivityMinutes" type="number" min="1" max="60" step="1" value="${state.inactivityMinutes}" />
+              <span>min</span>
+            </div>
+          </label>
+
+          <label class="field-card">
+            <span>Minimo de abas para agrupar</span>
+            <div class="inline-field">
+              <input id="minimumTabsToGroup" type="number" min="2" max="50" step="1" value="${state.minimumTabsToGroup}" />
+              <span>abas</span>
+            </div>
+          </label>
+
+          <label class="field-card toggle-row">
+            <span>
+              <strong>Recolher grupos inativos</strong>
+              <small>Quando todos os tabs do grupo estao parados, o grupo vira um bloco compacto.</small>
+            </span>
+            <input id="collapseInactiveGroups" type="checkbox" ${state.collapseInactiveGroups ? "checked" : ""} />
+          </label>
+        </div>
+      </details>
+
+      <div class="section-kicker">Services</div>
+      <details class="panel accordion">
+        <summary class="accordion-summary">
+          <div>
+            <h2>Aliases de sites</h2>
+            <p>Ex.: <code>google.com</code> vira <code>Google</code>.</p>
+          </div>
+          <span class="accordion-indicator" aria-hidden="true"></span>
+        </summary>
+        <div class="accordion-actions">
+          <button id="addAlias" class="secondary" type="button">Adicionar alias</button>
+        </div>
+        <div id="aliases" class="rules accordion-content"></div>
+      </details>
+
+      <details class="panel accordion" open>
+        <summary class="accordion-summary">
+          <div>
+            <h2>Inatividade por site</h2>
+            <p>Veja e ajuste exceções como <code>clickup.com = 30 min</code> sem depender só do menu da extensão.</p>
+          </div>
+          <span class="accordion-indicator" aria-hidden="true"></span>
+        </summary>
+        <div class="accordion-actions">
+          <button id="addOverride" class="secondary" type="button">Adicionar site</button>
+        </div>
+        <div id="siteOverrides" class="rules accordion-content"></div>
+      </details>
+
+      <section class="panel panel-dark">
+        <div class="section-head">
+          <div>
+            <h2>Regras de assunto</h2>
+            <p>Keywords separadas por virgula. Se baterem com 2 ou mais abas, a extensao cria o agrupamento.</p>
+          </div>
+          <button id="addRule" class="secondary">Adicionar regra</button>
+        </div>
+        <div id="rules" class="rules"></div>
+      </section>
+
+      <div class="section-kicker">Live status</div>
+      <section class="panel status-band">
+        <div>
+          <span class="label">Ultima execucao</span>
+          <strong id="lastRunAt">${latestSession?.lastRunAt ? new Date(latestSession.lastRunAt).toLocaleString() : "--"}</strong>
+        </div>
+        <div>
+          <span class="label">Resumo</span>
+          <strong id="lastSummary">${formatSummary(statusSummary)}</strong>
+        </div>
+      </section>
+
+      <section class="panel ram-panel">
+        <div class="section-head">
+          <div>
+            <h2>Economia de RAM</h2>
+            <p>Estimativa local baseada nas abas descarregadas recentemente. Nenhum dado sai do dispositivo.</p>
+          </div>
+          <span class="ram-pill">Local only</span>
+        </div>
+        <div class="ram-summary">
+          <div class="ram-summary-primary">
+            <span class="label">Total estimado</span>
+            <strong>${formatMb(ramSavings.estimatedMb)}</strong>
+            <small>${ramSavings.label}</small>
+          </div>
+          <div class="ram-summary-secondary">
+            <span class="label">Preset ativo</span>
+            <strong>${preset.label}</strong>
+            <small>${preset.minutes} min · ${preset.description}</small>
+          </div>
+        </div>
+        ${renderRamHistory(ramSavings.history)}
+      </section>
+
+      <section class="panel">
+        <div class="section-head">
+          <div>
+            <h2>Grupos atuais</h2>
+            <p>Renomeie, recolha ou desagrupe tudo daqui sem sair da pagina.</p>
+          </div>
+          <button id="refreshGroups" class="secondary">Atualizar</button>
+        </div>
+        <div class="actions actions-wrap">
+          <button id="ungroupAll" class="secondary">Desagrupar tudo</button>
+        </div>
+        <div id="groups" class="groups"></div>
+      </section>
+
+      ${renderFallbackNotice(statusSummary)}
+    </main>
+  `;
+
+  bindGeneralInputs();
+  bindEditorButtons();
+  bindActions();
+  renderAliasEditor();
+  renderSiteOverrideEditor();
+  renderRuleEditor();
+  renderGroupEditor();
+}
+
+function bindGeneralInputs(): void {
+  bindCheckbox("enabled", checked => {
+    state.enabled = checked;
+  });
+  bindSelect("optimizationPreset", value => {
+    const preset = OPTIMIZATION_PRESETS.find(item => item.id === value);
+    if (preset) {
+      state.optimizationPreset = preset.id;
+      state.inactivityMinutes = preset.inactivityMinutes;
+      syncInactivityInput(preset.inactivityMinutes);
+      return;
+    }
+
+    state.optimizationPreset = "custom";
+    syncPresetSelect("custom");
+  });
+  bindSelect("behavior", value => {
+    state.behavior = value as ExtensionSettings["behavior"];
+  });
+  bindSelect("strategy", value => {
+    state.strategy = value as ExtensionSettings["strategy"];
+  });
+  bindNumber("inactivityMinutes", value => {
+    state.inactivityMinutes = value;
+    state.optimizationPreset = resolvePresetIdFromMinutes(value);
+    syncPresetSelect(state.optimizationPreset);
+    syncInactivityInput(value);
+  });
+  bindNumber("minimumTabsToGroup", value => {
+    state.minimumTabsToGroup = Math.max(2, value);
+  });
+  bindCheckbox("collapseInactiveGroups", checked => {
+    state.collapseInactiveGroups = checked;
+  });
+}
+
+function bindEditorButtons(): void {
+  const addAliasButton = document.querySelector<HTMLButtonElement>("#addAlias");
+  const addOverrideButton = document.querySelector<HTMLButtonElement>("#addOverride");
+  const addRuleButton = document.querySelector<HTMLButtonElement>("#addRule");
+  const refreshGroupsButton = document.querySelector<HTMLButtonElement>("#refreshGroups");
+  const ungroupAllButton = document.querySelector<HTMLButtonElement>("#ungroupAll");
+
+  addAliasButton?.addEventListener("click", () => {
+    state.domainAliases = [
+      ...state.domainAliases,
+      {
+        id: createRuleId(),
+        domain: "",
+        label: "Novo alias",
+        color: "blue"
+      }
+    ];
+    render();
+  });
+
+  addOverrideButton?.addEventListener("click", () => {
+    state.siteDiscardOverrides = [
+      ...state.siteDiscardOverrides,
+      {
+        id: createRuleId(),
+        domain: "",
+        mode: "minutes",
+        inactivityMinutes: 30
+      }
+    ];
+    render();
+  });
+
+  addRuleButton?.addEventListener("click", () => {
+    state.customRules = [
+      ...state.customRules,
+      {
+        id: createRuleId(),
+        name: "Nova regra",
+        color: "blue",
+        keywords: []
+      }
+    ];
+    render();
+  });
+
+  refreshGroupsButton?.addEventListener("click", async () => {
+    latestGroups = await loadGroupSnapshot();
+    render();
+  });
+
+  ungroupAllButton?.addEventListener("click", async () => {
+    await ungroupAllGroups();
+    latestGroups = await loadGroupSnapshot();
+    render();
+  });
+}
+
+function bindActions(): void {
+  const saveButton = document.querySelector<HTMLButtonElement>("#save");
+  const scanButton = document.querySelector<HTMLButtonElement>("#scan");
+
+  saveButton?.addEventListener("click", async () => {
+    state.domainAliases = readAliasesFromDom();
+    state.siteDiscardOverrides = readOverridesFromDom();
+    state.customRules = readRulesFromDom();
+    await writeSettings(state);
+    latestRamSavings = await readRamSavingsAnalytics();
+    await flashButton(saveButton, "Salvo");
+  });
+
+  scanButton?.addEventListener("click", async () => {
+    state.domainAliases = readAliasesFromDom();
+    state.siteDiscardOverrides = readOverridesFromDom();
+    state.customRules = readRulesFromDom();
+    await writeSettings(state);
+    await chrome.runtime.sendMessage({ type: "idle-tab-grouper:scan-now" });
+    latestSession = await readSession();
+    latestRamSavings = await readRamSavingsAnalytics();
+    latestGroups = await loadGroupSnapshot();
+    render();
+    const refreshedScanButton = document.querySelector<HTMLButtonElement>("#scan");
+    if (refreshedScanButton) {
+      await flashButton(refreshedScanButton, "Feito");
+    }
+  });
+}
+
+function renderAliasEditor(): void {
+  const container = document.querySelector<HTMLDivElement>("#aliases");
+  if (!container) return;
+
+  container.innerHTML = state.domainAliases
+    .map(
+      (alias, index) => `
+        <article class="rule-card" data-alias-id="${alias.id}">
+          <header>
+            <div>
+              <strong>Alias ${index + 1}</strong>
+              <small>Faça o domínio falar o nome que você quer ver.</small>
+            </div>
+            <button type="button" class="ghost" data-remove-alias="${alias.id}">Remover</button>
+          </header>
+          <label>
+            <span>Domínio</span>
+            <input data-field="domain" type="text" value="${escapeHtml(alias.domain)}" placeholder="google.com" />
+          </label>
+          <label>
+            <span>Nome do grupo</span>
+            <input data-field="label" type="text" value="${escapeHtml(alias.label)}" placeholder="Google" />
+          </label>
+          <label>
+            <span>Cor</span>
+            <select data-field="color">
+              ${colorOptions(alias.color)}
+            </select>
+          </label>
+        </article>
+      `
+    )
+    .join("");
+
+  container.querySelectorAll<HTMLButtonElement>("[data-remove-alias]").forEach(button => {
+    button.addEventListener("click", () => {
+      const aliasId = button.dataset.removeAlias;
+      if (!aliasId) return;
+      state.domainAliases = state.domainAliases.filter(alias => alias.id !== aliasId);
+      render();
+    });
+  });
+}
+
+function renderSiteOverrideEditor(): void {
+  const container = document.querySelector<HTMLDivElement>("#siteOverrides");
+  if (!container) return;
+
+  if (state.siteDiscardOverrides.length === 0) {
+    container.innerHTML = `
+      <div class="empty-state">
+        Nenhum site com exceção ainda. Use o menu do ícone da extensão ou adicione um site aqui para personalizar a inatividade.
+      </div>
+    `;
+    return;
+  }
+
+  container.innerHTML = state.siteDiscardOverrides
+    .map(
+      (override, index) => `
+        <article class="rule-card" data-override-id="${override.id}">
+          <header>
+            <div>
+              <strong>Site ${index + 1}</strong>
+              <small>Controla só a inativação, sem mexer no agrupamento.</small>
+            </div>
+            <button type="button" class="ghost" data-remove-override="${override.id}">Remover</button>
+          </header>
+          <label>
+            <span>Domínio</span>
+            <input data-field="domain" type="text" value="${escapeHtml(override.domain)}" placeholder="clickup.com" />
+          </label>
+          <label>
+            <span>Regra</span>
+            <select data-field="mode">
+              <option value="minutes:15" ${override.mode === "minutes" && override.inactivityMinutes === 15 ? "selected" : ""}>Inativar em 15 min</option>
+              <option value="minutes:30" ${override.mode === "minutes" && override.inactivityMinutes === 30 ? "selected" : ""}>Inativar em 30 min</option>
+              <option value="minutes:60" ${override.mode === "minutes" && override.inactivityMinutes === 60 ? "selected" : ""}>Inativar em 60 min</option>
+              <option value="never" ${override.mode === "never" ? "selected" : ""}>Nunca inativar</option>
+            </select>
+          </label>
+        </article>
+      `
+    )
+    .join("");
+
+  container.querySelectorAll<HTMLButtonElement>("[data-remove-override]").forEach(button => {
+    button.addEventListener("click", () => {
+      const overrideId = button.dataset.removeOverride;
+      if (!overrideId) return;
+      state.siteDiscardOverrides = state.siteDiscardOverrides.filter(override => override.id !== overrideId);
+      render();
+    });
+  });
+}
+
+function renderRuleEditor(): void {
+  const container = document.querySelector<HTMLDivElement>("#rules");
+  if (!container) return;
+
+  container.innerHTML = state.customRules
+    .map(
+      (rule, index) => `
+        <article class="rule-card" data-rule-id="${rule.id}">
+          <header>
+            <div>
+              <strong>Regra ${index + 1}</strong>
+              <small>Combine keywords para forçar o grupo.</small>
+            </div>
+            <button type="button" class="ghost" data-remove-rule="${rule.id}">Remover</button>
+          </header>
+          <label>
+            <span>Nome do grupo</span>
+            <input data-field="name" type="text" value="${escapeHtml(rule.name)}" placeholder="Ex.: Trabalho" />
+          </label>
+          <label>
+            <span>Cor</span>
+            <select data-field="color">
+              ${colorOptions(rule.color)}
+            </select>
+          </label>
+          <label>
+            <span>Keywords</span>
+            <input data-field="keywords" type="text" value="${escapeHtml(rule.keywords.join(", "))}" placeholder="gmail, docs, jira" />
+          </label>
+        </article>
+      `
+    )
+    .join("");
+
+  container.querySelectorAll<HTMLButtonElement>("[data-remove-rule]").forEach(button => {
+    button.addEventListener("click", () => {
+      const ruleId = button.dataset.removeRule;
+      if (!ruleId) return;
+      state.customRules = state.customRules.filter(rule => rule.id !== ruleId);
+      render();
+    });
+  });
+}
+
+function renderGroupEditor(): void {
+  const container = document.querySelector<HTMLDivElement>("#groups");
+  if (!container) return;
+
+  if (latestGroups.length === 0) {
+    container.innerHTML = `
+      <div class="empty-state">
+        Nenhum grupo ativo agora. Agrupe algumas abas e elas vão aparecer aqui.
+      </div>
+    `;
+    return;
+  }
+
+  container.innerHTML = latestGroups
+    .map(
+      group => `
+        <article class="group-card" data-group-id="${group.id}">
+          <header>
+            <div>
+              <strong>${escapeHtml(group.title || "Sem título")}</strong>
+              <small>${group.tabCount} aba(s) · ${group.collapsed ? "recolhido" : "aberto"}</small>
+            </div>
+            <span class="group-color">${group.color}</span>
+          </header>
+          <label>
+            <span>Novo nome</span>
+            <input data-field="group-title" type="text" value="${escapeHtml(group.title || "")}" />
+          </label>
+          <div class="group-actions">
+            <button type="button" class="secondary" data-rename-group="${group.id}">Renomear</button>
+            <button type="button" class="secondary" data-toggle-collapse="${group.id}">${group.collapsed ? "Expandir" : "Recolher"}</button>
+            <button type="button" class="ghost" data-ungroup-group="${group.id}">Desagrupar</button>
+          </div>
+        </article>
+      `
+    )
+    .join("");
+
+  container.querySelectorAll<HTMLButtonElement>("[data-rename-group]").forEach(button => {
+    button.addEventListener("click", async () => {
+      const groupId = Number(button.dataset.renameGroup);
+      const card = button.closest<HTMLElement>("[data-group-id]");
+      const titleInput = card?.querySelector<HTMLInputElement>('[data-field="group-title"]');
+      const nextTitle = titleInput?.value.trim();
+      if (!Number.isFinite(groupId) || !nextTitle) return;
+      await chrome.tabGroups.update(groupId, { title: nextTitle });
+      latestGroups = await loadGroupSnapshot();
+      render();
+    });
+  });
+
+  container.querySelectorAll<HTMLButtonElement>("[data-toggle-collapse]").forEach(button => {
+    button.addEventListener("click", async () => {
+      const groupId = Number(button.dataset.toggleCollapse);
+      const group = latestGroups.find(item => item.id === groupId);
+      if (!Number.isFinite(groupId) || !group) return;
+      await chrome.tabGroups.update(groupId, { collapsed: !group.collapsed });
+      latestGroups = await loadGroupSnapshot();
+      render();
+    });
+  });
+
+  container.querySelectorAll<HTMLButtonElement>("[data-ungroup-group]").forEach(button => {
+    button.addEventListener("click", async () => {
+      const groupId = Number(button.dataset.ungroupGroup);
+      if (!Number.isFinite(groupId)) return;
+      await ungroupGroup(groupId);
+      latestGroups = await loadGroupSnapshot();
+      render();
+    });
+  });
+}
+
+function readAliasesFromDom(): DomainAlias[] {
+  const cards = Array.from(document.querySelectorAll<HTMLElement>("[data-alias-id]"));
+  return cards
+    .map(card => {
+      const id = card.dataset.aliasId || createRuleId();
+      const domain = normalizeDomain(card.querySelector<HTMLInputElement>('[data-field="domain"]')?.value || "");
+      const label = card.querySelector<HTMLInputElement>('[data-field="label"]')?.value.trim() || "";
+      const color = card.querySelector<HTMLSelectElement>('[data-field="color"]')?.value as TabGroupColor;
+      return {
+        id,
+        domain,
+        label,
+        color: color || "blue"
+      };
+    })
+    .filter(alias => alias.domain.length > 0 && alias.label.length > 0);
+}
+
+function readRulesFromDom(): TabRule[] {
+  const cards = Array.from(document.querySelectorAll<HTMLElement>("[data-rule-id]"));
+  return cards
+    .map(card => {
+      const id = card.dataset.ruleId || createRuleId();
+      const name = card.querySelector<HTMLInputElement>('[data-field="name"]')?.value.trim() || "Nova regra";
+      const color = card.querySelector<HTMLSelectElement>('[data-field="color"]')?.value as TabGroupColor;
+      const keywordsValue = card.querySelector<HTMLInputElement>('[data-field="keywords"]')?.value || "";
+      return {
+        id,
+        name,
+        color: color || "blue",
+        keywords: toRuleKeywords(keywordsValue)
+      };
+    })
+    .filter(rule => rule.name.length > 0 || rule.keywords.length > 0);
+}
+
+function readOverridesFromDom(): SiteDiscardOverride[] {
+  const cards = Array.from(document.querySelectorAll<HTMLElement>("[data-override-id]"));
+  const overrides: SiteDiscardOverride[] = [];
+
+  for (const card of cards) {
+    const id = card.dataset.overrideId || createRuleId();
+    const domain = normalizeDomain(card.querySelector<HTMLInputElement>('[data-field="domain"]')?.value || "");
+    const modeValue = card.querySelector<HTMLSelectElement>('[data-field="mode"]')?.value || "minutes:30";
+
+    if (!domain) continue;
+
+    if (modeValue === "never") {
+      overrides.push({
+        id,
+        domain,
+        mode: "never"
+      });
+      continue;
+    }
+
+    const [, minutesRaw] = modeValue.split(":");
+    const inactivityMinutes = Number(minutesRaw || 30);
+    overrides.push({
+      id,
+      domain,
+      mode: "minutes",
+      inactivityMinutes: Number.isFinite(inactivityMinutes) ? inactivityMinutes : 30
+    });
+  }
+
+  return overrides;
+}
+
+function bindCheckbox(id: string, onChange: (checked: boolean) => void): void {
+  const input = document.querySelector<HTMLInputElement>(`#${id}`);
+  if (!input) return;
+  input.addEventListener("change", () => onChange(input.checked));
+}
+
+function bindSelect(id: string, onChange: (value: string) => void): void {
+  const input = document.querySelector<HTMLSelectElement>(`#${id}`);
+  if (!input) return;
+  input.addEventListener("change", () => onChange(input.value));
+}
+
+function bindNumber(id: string, onChange: (value: number) => void): void {
+  const input = document.querySelector<HTMLInputElement>(`#${id}`);
+  if (!input) return;
+  input.addEventListener("change", () => onChange(Number(input.value || 3)));
+}
+
+function syncPresetSelect(presetId: OptimizationPreset): void {
+  const presetSelect = document.querySelector<HTMLSelectElement>("#optimizationPreset");
+  if (!presetSelect) return;
+  presetSelect.value = presetId;
+}
+
+function syncInactivityInput(minutes: number): void {
+  const inactivityInput = document.querySelector<HTMLInputElement>("#inactivityMinutes");
+  if (!inactivityInput) return;
+  inactivityInput.value = String(minutes);
+}
+
+function colorOptions(selected: TabGroupColor): string {
+  const colors: TabGroupColor[] = ["grey", "blue", "cyan", "green", "yellow", "orange", "red", "pink", "purple"];
+  return colors
+    .map(color => `<option value="${color}" ${color === selected ? "selected" : ""}>${color}</option>`)
+    .join("");
+}
+
+function formatSummary(summary: Awaited<ReturnType<typeof readSession>>["lastSummary"] | null): string {
+  if (!summary) return "--";
+  return `${summary.movedCount} movidas, ${summary.suggestedCount} sugestões, ${summary.collapsedGroupCount} grupos recolhidos, ${summary.fallbackCount} fallback(s), ${summary.pendingCount} pendentes`;
+}
+
+function formatMb(value: number): string {
+  return `${RAM_NUMBER_FORMAT.format(Math.max(0, Math.round(value)))} MB`;
+}
+
+function renderRamHistory(history: RamHistoryPoint[]): string {
+  if (history.length === 0) {
+    return `
+      <div class="empty-state ram-empty">
+        Nenhum dado local ainda. Quando abas forem descartadas, a economia estimada aparece aqui sem sair do dispositivo.
+      </div>
+    `;
+  }
+
+  const maxValue = Math.max(...history.map(point => point.estimatedMb), 1);
+  return `
+    <div class="ram-history">
+      ${history
+        .map(point => {
+          const width = Math.max(6, Math.round((point.estimatedMb / maxValue) * 100));
+          const suffix = Number.isFinite(point.discardedTabs) ? ` · ${point.discardedTabs} aba(s)` : "";
+          return `
+            <div class="ram-history-row">
+              <div class="ram-history-meta">
+                <strong>${escapeHtml(point.day)}</strong>
+                <small>${formatMb(point.estimatedMb)}${escapeHtml(suffix)}</small>
+              </div>
+              <div class="ram-history-track" aria-hidden="true">
+                <span class="ram-history-fill" style="width:${width}%"></span>
+              </div>
+            </div>
+          `;
+        })
+        .join("")}
+    </div>
+  `;
+}
+
+function renderFallbackNotice(summary: Awaited<ReturnType<typeof readSession>>["lastSummary"] | null): string {
+  if (!summary || (summary.fallbackCount <= 0 && summary.pendingCount <= 0)) return "";
+  return `
+    <section class="notice warning">
+      <strong>Revisão necessária</strong>
+      <p>${summary.fallbackCount} aba(s) caíram em fallback e ${summary.pendingCount} ficaram abaixo do mínimo para agrupar. Ajuste aliases ou regras para reduzir isso.</p>
+    </section>
+  `;
+}
+
+async function loadGroupSnapshot(): Promise<GroupSnapshot[]> {
+  const [groups, tabs] = await Promise.all([chrome.tabGroups.query({}), chrome.tabs.query({})]);
+  return groups
+    .map(group => ({
+      collapsed: group.collapsed,
+      color: group.color,
+      id: group.id,
+      tabCount: tabs.filter(tab => tab.groupId === group.id).length,
+      title: group.title || "",
+      windowId: group.windowId
+    }))
+    .filter(group => group.tabCount > 0)
+    .sort((a, b) => a.title.localeCompare(b.title));
+}
+
+async function ungroupGroup(groupId: number): Promise<void> {
+  const tabs = await chrome.tabs.query({});
+  const tabIds = tabs
+    .filter((tab): tab is chrome.tabs.Tab & { id: number } => tab.groupId === groupId && tab.id != null)
+    .map(tab => tab.id);
+  if (tabIds.length > 0) {
+    await chrome.tabs.ungroup(tabIds);
+  }
+}
+
+async function ungroupAllGroups(): Promise<void> {
+  const tabs = await chrome.tabs.query({});
+  const tabIds = tabs
+    .filter((tab): tab is chrome.tabs.Tab & { id: number } => tab.groupId != null && tab.groupId !== -1 && tab.id != null)
+    .map(tab => tab.id);
+  if (tabIds.length > 0) {
+    await chrome.tabs.ungroup(tabIds);
+  }
+}
+
+async function flashButton(button: HTMLButtonElement, label: string): Promise<void> {
+  const original = button.textContent;
+  button.textContent = label;
+  window.setTimeout(() => {
+    button.textContent = original;
+  }, 1000);
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}

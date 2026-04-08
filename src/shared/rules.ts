@@ -1,6 +1,6 @@
 import { PRESET_RULES } from "./defaults";
 import { PRESET_ALIASES } from "./defaults";
-import type { DomainAlias, ExtensionSettings, TabGroupColor, TabRule } from "./types";
+import type { DomainAlias, ExtensionSettings, SiteDiscardOverride, TabGroupColor, TabRule } from "./types";
 
 export interface TabDecision {
   title: string;
@@ -30,6 +30,38 @@ export function fromStoredRules(rules: TabRule[]): TabRule[] {
     id: rule.id || createRuleId(),
     keywords: Array.isArray(rule.keywords) ? rule.keywords : []
   }));
+}
+
+export function fromStoredDiscardOverrides(overrides: SiteDiscardOverride[]): SiteDiscardOverride[] {
+  const normalizedOverrides: SiteDiscardOverride[] = [];
+
+  for (const override of overrides) {
+    const domain = normalizeDomain(override.domain);
+    if (!domain) continue;
+
+    if (override.mode === "never") {
+      normalizedOverrides.push({
+        id: override.id || createRuleId(),
+        domain,
+        mode: "never"
+      });
+      continue;
+    }
+
+    const inactivityMinutes = Number(override.inactivityMinutes);
+    if (!Number.isFinite(inactivityMinutes) || inactivityMinutes < 1) {
+      continue;
+    }
+
+    normalizedOverrides.push({
+      id: override.id || createRuleId(),
+      domain,
+      mode: "minutes",
+      inactivityMinutes: Math.trunc(inactivityMinutes)
+    });
+  }
+
+  return normalizedOverrides.sort((a, b) => a.domain.localeCompare(b.domain));
 }
 
 export function fromStoredAliases(aliases: DomainAlias[]): DomainAlias[] {
@@ -64,6 +96,24 @@ export function findAliasForHostname(hostname: string, aliases: DomainAlias[]): 
       .map(alias => ({ ...alias, domain: normalizeDomain(alias.domain), label: alias.label.trim() }))
       .find(alias => normalized === alias.domain || normalized.endsWith(`.${alias.domain}`)) ||
     null
+  );
+}
+
+export function findDiscardOverrideForHostname(
+  hostname: string,
+  overrides: SiteDiscardOverride[]
+): SiteDiscardOverride | null {
+  const normalized = normalizeDomain(hostname);
+  const sortedOverrides = [...overrides]
+    .map(override => ({
+      ...override,
+      domain: normalizeDomain(override.domain)
+    }))
+    .filter(override => override.domain.length > 0)
+    .sort((a, b) => b.domain.length - a.domain.length);
+
+  return (
+    sortedOverrides.find(override => normalized === override.domain || normalized.endsWith(`.${override.domain}`)) || null
   );
 }
 

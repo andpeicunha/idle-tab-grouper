@@ -31,6 +31,10 @@ body {
   min-height: 100vh;
 }
 
+body.options-body {
+  min-width: 100%;
+}
+
 h1,
 h2,
 p {
@@ -41,6 +45,16 @@ p {
   padding: 18px;
   display: grid;
   gap: 14px;
+}
+
+.shell-popup {
+  min-width: 420px;
+}
+
+.shell-page {
+  width: min(1180px, calc(100vw - 48px));
+  margin: 0 auto;
+  padding: 28px 0 40px;
 }
 
 .topbar {
@@ -151,10 +165,22 @@ h2 {
   margin-top: 4px;
 }
 
+.hero-actions-stack {
+  flex-wrap: wrap;
+}
+
+.hero-panel-wide .hero-lede {
+  max-width: 56ch;
+}
+
 .stats-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
+}
+
+.stats-grid-compact .stat-card {
+  min-height: 0;
 }
 
 .stat-card {
@@ -638,5 +664,18 @@ code {
 
   .ram-history-meta small {
     text-align: left;
+  }
+}
+
+@media (max-width: 900px) {
+  .shell-page {
+    width: min(100vw - 28px, 100%);
+    padding-top: 18px;
+  }
+
+  .settings-grid,
+  .stats-grid,
+  .ram-summary {
+    grid-template-columns: 1fr;
   }
 }

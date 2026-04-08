@@ -3,7 +3,7 @@
   "name": "Idle Tab Grouper",
   "version": "0.2.5",
   "description": "Agrupa e descarta abas inativas com segurança, além de mostrar economia estimada de RAM localmente.",
-  "permissions": ["tabs", "tabGroups", "storage", "alarms"],
+  "permissions": ["tabs", "tabGroups", "storage", "alarms", "contextMenus"],
   "action": {
     "default_icon": {
       "16": "icons/icon-16.png",
@@ -21,5 +21,9 @@
   "background": {
     "service_worker": "background.js",
     "type": "module"
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
   }
 }

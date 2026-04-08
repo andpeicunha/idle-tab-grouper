@@ -1,4 +1,5 @@
 import type { ExtensionSettings } from "./types";
+import { findDiscardOverrideForHostname, getHostname } from "./rules";
 
 const INTERNAL_URL_PREFIXES = ["chrome://", "chrome-extension://"] as const;
 
@@ -29,4 +30,22 @@ export function shouldDiscardTab(tab: chrome.tabs.Tab): boolean {
 
 export function canDiscardWithSettings(tab: chrome.tabs.Tab, settings: ExtensionSettings): boolean {
   return settings.discardEnabled && settings.behavior === "auto" && shouldDiscardTab(tab);
+}
+
+export function getEffectiveDiscardInactivityMinutes(
+  tab: chrome.tabs.Tab,
+  settings: ExtensionSettings
+): number | null {
+  const hostname = getHostname(tab.url || "");
+  const override = findDiscardOverrideForHostname(hostname, settings.siteDiscardOverrides);
+
+  if (!override) {
+    return settings.inactivityMinutes;
+  }
+
+  if (override.mode === "never") {
+    return null;
+  }
+
+  return Math.max(settings.inactivityMinutes, override.inactivityMinutes ?? settings.inactivityMinutes);
 }

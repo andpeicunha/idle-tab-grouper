@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { canDiscardWithSettings, isProtectedInternalUrl, shouldConsiderTab, shouldDiscardTab } from "../src/shared/optimization";
+import {
+  canDiscardWithSettings,
+  getEffectiveDiscardInactivityMinutes,
+  isProtectedInternalUrl,
+  shouldConsiderTab,
+  shouldDiscardTab
+} from "../src/shared/optimization";
 import { DEFAULT_SETTINGS } from "../src/shared/defaults";
 
 function createTab(overrides: Partial<chrome.tabs.Tab> = {}): chrome.tabs.Tab {
@@ -45,5 +51,30 @@ describe("shared optimization guards", () => {
     expect(canDiscardWithSettings(createTab(), { ...DEFAULT_SETTINGS, discardEnabled: false })).toBe(false);
     expect(canDiscardWithSettings(createTab(), { ...DEFAULT_SETTINGS, behavior: "suggest" })).toBe(false);
     expect(canDiscardWithSettings(createTab({ audible: true }), DEFAULT_SETTINGS)).toBe(false);
+  });
+
+  it("resolves per-site discard overrides without changing the global grouping threshold", () => {
+    const settings = {
+      ...DEFAULT_SETTINGS,
+      inactivityMinutes: 5,
+      siteDiscardOverrides: [
+        { id: "clickup", domain: "clickup.com", mode: "minutes" as const, inactivityMinutes: 30 },
+        { id: "never", domain: "slow.example.com", mode: "never" as const }
+      ]
+    };
+
+    expect(getEffectiveDiscardInactivityMinutes(createTab({ url: "https://app.clickup.com/t/123" }), settings)).toBe(30);
+    expect(getEffectiveDiscardInactivityMinutes(createTab({ url: "https://slow.example.com/dashboard" }), settings)).toBeNull();
+    expect(getEffectiveDiscardInactivityMinutes(createTab({ url: "https://example.com/page" }), settings)).toBe(5);
+  });
+
+  it("never lowers discard below the global inactivity threshold", () => {
+    const settings = {
+      ...DEFAULT_SETTINGS,
+      inactivityMinutes: 20,
+      siteDiscardOverrides: [{ id: "clickup", domain: "clickup.com", mode: "minutes" as const, inactivityMinutes: 15 }]
+    };
+
+    expect(getEffectiveDiscardInactivityMinutes(createTab({ url: "https://app.clickup.com/t/123" }), settings)).toBe(20);
   });
 });

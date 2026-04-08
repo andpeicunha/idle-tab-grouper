@@ -17,7 +17,12 @@ describe("shared storage normalization", () => {
       estimatedRamPerDiscardMb: 60,
       ramSavingsRetentionDays: 14,
       domainAliases: [],
-      customRules: []
+      customRules: [],
+      siteDiscardOverrides: [
+        { id: "clickup", domain: "ClickUp.com", mode: "minutes", inactivityMinutes: 30 },
+        { domain: "broken.com", mode: "minutes", inactivityMinutes: 0 },
+        { domain: "never.com", mode: "never" }
+      ]
     });
 
     expect(settings.enabled).toBe(true);
@@ -30,6 +35,10 @@ describe("shared storage normalization", () => {
     expect(settings.discardEnabled).toBe(true);
     expect(settings.estimatedRamPerDiscardMb).toBe(60);
     expect(settings.ramSavingsRetentionDays).toBe(14);
+    expect(settings.siteDiscardOverrides).toEqual([
+      { id: "clickup", domain: "clickup.com", mode: "minutes", inactivityMinutes: 30 },
+      { id: expect.any(String), domain: "never.com", mode: "never" }
+    ]);
   });
 
   it("falls back to custom when the preset and minutes diverge", () => {

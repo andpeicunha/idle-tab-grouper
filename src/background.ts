@@ -1,22 +1,38 @@
-import { canDiscardWithSettings, shouldConsiderTab, shouldDiscardTab } from "./shared/optimization";
-import { classifyTab, isIdle } from "./shared/rules";
+import {
+  canDiscardWithSettings,
+  getEffectiveDiscardInactivityMinutes,
+  shouldConsiderTab,
+  shouldDiscardTab
+} from "./shared/optimization";
+import { classifyTab, getHostname, isIdle, normalizeDomain } from "./shared/rules";
 import {
   ensureRamSavingsAnalytics,
   ensureSettings,
   readSettings,
   readSession,
   recordRamSavings,
+  writeSettings,
   writeSession
 } from "./shared/storage";
 import type { SessionState, SessionSummary } from "./shared/types";
 import type { TabDecision } from "./shared/rules";
+import type { ExtensionSettings, SiteDiscardOverride } from "./shared/types";
 
 const DEFAULT_ALARM_NAME = "scan-idle-tabs";
 const SCAN_INTERVAL_MINUTES = 1;
+const CONTEXT_MENU_PARENT_ID = "idle-tab-grouper:discard-site";
+const CONTEXT_MENU_DEFAULT_ID = "idle-tab-grouper:discard-site:default";
+const CONTEXT_MENU_NEVER_ID = "idle-tab-grouper:discard-site:never";
+const CONTEXT_MENU_15_ID = "idle-tab-grouper:discard-site:15";
+const CONTEXT_MENU_30_ID = "idle-tab-grouper:discard-site:30";
+const CONTEXT_MENU_60_ID = "idle-tab-grouper:discard-site:60";
+const ACTION_CONTEXTS = ["action"] as chrome.contextMenus.ContextType[];
+
 chrome.runtime.onInstalled.addListener(async () => {
   await ensureSettings();
   await ensureRamSavingsAnalytics();
   await ensureAlarm();
+  await ensureContextMenus();
   await scanAndGroupTabs("install");
 });
 
@@ -24,6 +40,7 @@ chrome.runtime.onStartup.addListener(async () => {
   await ensureSettings();
   await ensureRamSavingsAnalytics();
   await ensureAlarm();
+  await ensureContextMenus();
 });
 
 chrome.alarms.onAlarm.addListener(async alarm => {
@@ -54,11 +71,66 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   return true;
 });
 
+chrome.contextMenus.onClicked.addListener(async (info, tab) => {
+  const selected = toDiscardOverrideSelection(info.menuItemId);
+  if (!selected) return;
+
+  const targetTab = await resolveActionTargetTab(tab);
+  if (!targetTab?.url) return;
+
+  const domain = normalizeDomain(getHostname(targetTab.url));
+  if (!domain) return;
+
+  const settings = await readSettings();
+  const nextSettings = applySiteDiscardOverride(settings, domain, selected);
+  await writeSettings(nextSettings);
+  await scanAndGroupTabs("context-menu");
+});
+
 async function ensureAlarm(): Promise<void> {
   const existing = await chrome.alarms.get(DEFAULT_ALARM_NAME);
   if (!existing) {
     chrome.alarms.create(DEFAULT_ALARM_NAME, { periodInMinutes: SCAN_INTERVAL_MINUTES });
   }
+}
+
+async function ensureContextMenus(): Promise<void> {
+  await chrome.contextMenus.removeAll();
+  await chrome.contextMenus.create({
+    id: CONTEXT_MENU_PARENT_ID,
+    title: "Inatividade no site atual",
+    contexts: ACTION_CONTEXTS
+  });
+  await chrome.contextMenus.create({
+    id: CONTEXT_MENU_DEFAULT_ID,
+    parentId: CONTEXT_MENU_PARENT_ID,
+    title: "Usar padrao",
+    contexts: ACTION_CONTEXTS
+  });
+  await chrome.contextMenus.create({
+    id: CONTEXT_MENU_NEVER_ID,
+    parentId: CONTEXT_MENU_PARENT_ID,
+    title: "Nunca inativar neste site",
+    contexts: ACTION_CONTEXTS
+  });
+  await chrome.contextMenus.create({
+    id: CONTEXT_MENU_15_ID,
+    parentId: CONTEXT_MENU_PARENT_ID,
+    title: "Tempo para inativar neste site: 15 min",
+    contexts: ACTION_CONTEXTS
+  });
+  await chrome.contextMenus.create({
+    id: CONTEXT_MENU_30_ID,
+    parentId: CONTEXT_MENU_PARENT_ID,
+    title: "Tempo para inativar neste site: 30 min",
+    contexts: ACTION_CONTEXTS
+  });
+  await chrome.contextMenus.create({
+    id: CONTEXT_MENU_60_ID,
+    parentId: CONTEXT_MENU_PARENT_ID,
+    title: "Tempo para inativar neste site: 60 min",
+    contexts: ACTION_CONTEXTS
+  });
 }
 
 async function updateHeartbeat(): Promise<void> {
@@ -100,38 +172,44 @@ async function scanAndGroupTabs(reason: string): Promise<SessionSummary> {
 
   for (const tab of tabs) {
     if (!shouldConsiderTab(tab)) continue;
-    if (!isIdle(tab, now, settings.inactivityMinutes)) continue;
-
-    const decision = classifyTab(tab, settings);
+    const groupIdle = isIdle(tab, now, settings.inactivityMinutes);
     const canDiscard = canDiscardWithSettings(tab, settings);
+    const discardThreshold = canDiscard ? getEffectiveDiscardInactivityMinutes(tab, settings) : null;
+    const discardIdle = discardThreshold != null && isIdle(tab, now, discardThreshold);
 
-    if (decision.source === "fallback") {
-      summary.fallbackCount += 1;
-      if (canDiscard) {
-        discardCandidates.push(tab);
+    if (!groupIdle && !discardIdle) continue;
+
+    if (groupIdle) {
+      const decision = classifyTab(tab, settings);
+
+      if (decision.source === "fallback") {
+        summary.fallbackCount += 1;
+        if (discardIdle) {
+          discardCandidates.push(tab);
+        }
+        continue;
       }
-      continue;
-    }
 
-    if (isAlreadyInCorrectGroup(tab, decision, groupsById)) {
-      if (canDiscard) {
-        discardCandidates.push(tab);
+      if (isAlreadyInCorrectGroup(tab, decision, groupsById)) {
+        if (discardIdle) {
+          discardCandidates.push(tab);
+        }
+        continue;
       }
-      continue;
+
+      const bucketKey = `${decision.key}:${tab.windowId}`;
+      const bucket = buckets.get(bucketKey);
+      if (bucket) {
+        bucket.tabs.push(tab);
+      } else {
+        buckets.set(bucketKey, {
+          decision,
+          tabs: [tab]
+        });
+      }
     }
 
-    const bucketKey = `${decision.key}:${tab.windowId}`;
-    const bucket = buckets.get(bucketKey);
-    if (bucket) {
-      bucket.tabs.push(tab);
-    } else {
-      buckets.set(bucketKey, {
-        decision,
-        tabs: [tab]
-      });
-    }
-
-    if (canDiscard) {
+    if (discardIdle) {
       discardCandidates.push(tab);
     }
   }
@@ -303,4 +381,68 @@ async function discardIdleTabs(tabs: chrome.tabs.Tab[]): Promise<number> {
   }
 
   return discardedCount;
+}
+
+function toDiscardOverrideSelection(menuItemId: string | number): "default" | "never" | 15 | 30 | 60 | null {
+  switch (menuItemId) {
+    case CONTEXT_MENU_DEFAULT_ID:
+      return "default";
+    case CONTEXT_MENU_NEVER_ID:
+      return "never";
+    case CONTEXT_MENU_15_ID:
+      return 15;
+    case CONTEXT_MENU_30_ID:
+      return 30;
+    case CONTEXT_MENU_60_ID:
+      return 60;
+    default:
+      return null;
+  }
+}
+
+async function resolveActionTargetTab(clickedTab?: chrome.tabs.Tab): Promise<chrome.tabs.Tab | null> {
+  if (clickedTab?.url) {
+    return clickedTab;
+  }
+
+  const [activeTab] = await chrome.tabs.query({
+    active: true,
+    currentWindow: true
+  });
+
+  return activeTab ?? null;
+}
+
+function applySiteDiscardOverride(
+  settings: ExtensionSettings,
+  domain: string,
+  selection: "default" | "never" | 15 | 30 | 60
+): ExtensionSettings {
+  const siteDiscardOverrides = settings.siteDiscardOverrides.filter(override => override.domain !== domain);
+
+  if (selection === "default") {
+    return {
+      ...settings,
+      siteDiscardOverrides
+    };
+  }
+
+  const nextOverride: SiteDiscardOverride =
+    selection === "never"
+      ? {
+          id: domain,
+          domain,
+          mode: "never"
+        }
+      : {
+          id: domain,
+          domain,
+          mode: "minutes",
+          inactivityMinutes: selection
+        };
+
+  return {
+    ...settings,
+    siteDiscardOverrides: [...siteDiscardOverrides, nextOverride].sort((a, b) => a.domain.localeCompare(b.domain))
+  };
 }

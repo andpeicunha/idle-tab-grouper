@@ -26,7 +26,11 @@ try {
     force: true
   });
 
-  execFileSync("zip", ["-rqf", outputZip, "."], {
+  rmSync(outputZip, {
+    force: true
+  });
+
+  execFileSync("zip", ["-rq", outputZip, "."], {
     cwd: extensionDir,
     stdio: "inherit"
   });

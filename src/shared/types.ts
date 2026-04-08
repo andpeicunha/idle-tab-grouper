@@ -2,6 +2,7 @@ export type GroupBehavior = "auto" | "suggest";
 export type GroupStrategy = "hybrid" | "subject" | "site";
 export type TabGroupColor = "grey" | "blue" | "cyan" | "green" | "yellow" | "orange" | "red" | "pink" | "purple";
 export type OptimizationPreset = "aggressive" | "balanced" | "conservative" | "custom";
+export type SiteDiscardOverrideMode = "never" | "minutes";
 
 export interface DomainAlias {
   id: string;
@@ -23,6 +24,13 @@ export interface OptimizationPresetConfig {
   inactivityMinutes: number;
 }
 
+export interface SiteDiscardOverride {
+  id: string;
+  domain: string;
+  mode: SiteDiscardOverrideMode;
+  inactivityMinutes?: number;
+}
+
 export interface ExtensionSettings {
   enabled: boolean;
   behavior: GroupBehavior;
@@ -36,6 +44,7 @@ export interface ExtensionSettings {
   ramSavingsRetentionDays: number;
   domainAliases: DomainAlias[];
   customRules: TabRule[];
+  siteDiscardOverrides: SiteDiscardOverride[];
 }
 
 export interface RamSavingsDailyEntry {

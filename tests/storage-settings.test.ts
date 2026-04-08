@@ -51,5 +51,6 @@ describe("settings normalization", () => {
     expect(normalized.minimumTabsToGroup).toBe(DEFAULT_SETTINGS.minimumTabsToGroup);
     expect(normalized.estimatedRamPerDiscardMb).toBe(DEFAULT_SETTINGS.estimatedRamPerDiscardMb);
     expect(normalized.ramSavingsRetentionDays).toBe(DEFAULT_SETTINGS.ramSavingsRetentionDays);
+    expect(normalized.siteDiscardOverrides).toEqual([]);
   });
 });
