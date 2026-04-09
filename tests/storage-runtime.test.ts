@@ -4,8 +4,11 @@ import {
   createDefaultRamSavingsAnalytics,
   ensureRamSavingsAnalytics,
   ensureSettings,
+  ensureUiPreferences,
   readRamSavingsAnalytics,
+  readUiPreferences,
   recordRamSavings,
+  writeUiPreferences,
   writeSettings
 } from "../src/shared/storage";
 import { DEFAULT_SETTINGS } from "../src/shared/defaults";
@@ -81,5 +84,21 @@ describe("storage runtime boundaries", () => {
       days: []
     });
     expect(syncBucket["idle-tab-grouper-ram-savings"]).toBeUndefined();
+  });
+
+  it("stores dismissible UI preferences locally only", async () => {
+    await ensureUiPreferences();
+    expect(await readUiPreferences()).toEqual({
+      dismissChromeMemorySaverNotice: false
+    });
+
+    await writeUiPreferences({
+      dismissChromeMemorySaverNotice: true
+    });
+
+    expect(localBucket["idle-tab-grouper-ui-preferences"]).toEqual({
+      dismissChromeMemorySaverNotice: true
+    });
+    expect(syncBucket["idle-tab-grouper-ui-preferences"]).toBeUndefined();
   });
 });

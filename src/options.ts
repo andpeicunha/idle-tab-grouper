@@ -3,9 +3,12 @@ import "./styles/popup.css";
 import { DEFAULT_SETTINGS, OPTIMIZATION_PRESETS } from "./shared/defaults";
 import { createRuleId, fromStoredAliases, fromStoredRules, normalizeDomain, toRuleKeywords } from "./shared/rules";
 import {
+  ensureUiPreferences,
   readRamSavingsAnalytics,
   readSettings,
   readSession,
+  readUiPreferences,
+  writeUiPreferences,
   writeSettings
 } from "./shared/storage";
 import {
@@ -44,6 +47,7 @@ let state: ExtensionSettings = { ...DEFAULT_SETTINGS };
 let latestSession: Awaited<ReturnType<typeof readSession>> | null = null;
 let latestGroups: GroupSnapshot[] = [];
 let latestRamSavings: RamSavingsAnalyticsState | null = null;
+let chromeMemorySaverNoticeDismissed = false;
 
 init().catch(error => {
   console.error("Failed to init options page", error);
@@ -51,11 +55,13 @@ init().catch(error => {
 });
 
 async function init(): Promise<void> {
-  const [settings, session, groups, ramSavings] = await Promise.all([
+  await ensureUiPreferences();
+  const [settings, session, groups, ramSavings, uiPreferences] = await Promise.all([
     readSettings(),
     readSession(),
     loadGroupSnapshot(),
-    readRamSavingsAnalytics()
+    readRamSavingsAnalytics(),
+    readUiPreferences()
   ]);
   state = {
     ...settings,
@@ -65,6 +71,7 @@ async function init(): Promise<void> {
   latestSession = session;
   latestGroups = groups;
   latestRamSavings = ramSavings;
+  chromeMemorySaverNoticeDismissed = uiPreferences.dismissChromeMemorySaverNotice;
   render();
 }
 
@@ -123,6 +130,8 @@ function render(): void {
           <small>${ramSavings.localOnlyLabel}</small>
         </article>
       </section>
+
+      ${renderChromeMemorySaverNotice()}
 
       <div class="section-kicker">Setup</div>
       <details class="panel accordion settings-panel" open>
@@ -392,6 +401,8 @@ function bindEditorButtons(): void {
 function bindActions(): void {
   const saveButton = document.querySelector<HTMLButtonElement>("#save");
   const scanButton = document.querySelector<HTMLButtonElement>("#scan");
+  const openChromePerformanceButton = document.querySelector<HTMLButtonElement>("#openChromePerformance");
+  const dismissChromePerformanceNoticeButton = document.querySelector<HTMLButtonElement>("#dismissChromePerformanceNotice");
 
   saveButton?.addEventListener("click", async () => {
     state.domainAliases = readAliasesFromDom();
@@ -416,6 +427,18 @@ function bindActions(): void {
     if (refreshedScanButton) {
       await flashButton(refreshedScanButton, "Feito");
     }
+  });
+
+  openChromePerformanceButton?.addEventListener("click", async () => {
+    await chrome.tabs.create({ url: "chrome://settings/performance" });
+  });
+
+  dismissChromePerformanceNoticeButton?.addEventListener("click", async () => {
+    const nextState = await writeUiPreferences({
+      dismissChromeMemorySaverNotice: true
+    });
+    chromeMemorySaverNoticeDismissed = nextState.dismissChromeMemorySaverNotice;
+    render();
   });
 }
 
@@ -786,6 +809,25 @@ function renderFallbackNotice(summary: Awaited<ReturnType<typeof readSession>>["
     <section class="notice warning">
       <strong>Revisão necessária</strong>
       <p>${summary.fallbackCount} aba(s) caíram em fallback e ${summary.pendingCount} ficaram abaixo do mínimo para agrupar. Ajuste aliases ou regras para reduzir isso.</p>
+    </section>
+  `;
+}
+
+function renderChromeMemorySaverNotice(): string {
+  if (chromeMemorySaverNoticeDismissed) {
+    return "";
+  }
+
+  return `
+    <section class="notice warning notice-action">
+      <div>
+        <strong>Memory Saver do Chrome</strong>
+        <p>O Chrome também pode inativar abas por conta própria com o Memory Saver. Para que as regras desta extensão tenham efeito mais previsível, desligue esse recurso no Chrome.</p>
+      </div>
+      <div class="notice-action-buttons">
+        <button id="openChromePerformance" class="secondary" type="button">Abrir Performance do Chrome</button>
+        <button id="dismissChromePerformanceNotice" class="ghost" type="button">Entendi, não mostrar novamente</button>
+      </div>
     </section>
   `;
 }

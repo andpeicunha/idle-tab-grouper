@@ -1,7 +1,7 @@
 {
   "name": "idle-tab-grouper",
   "private": true,
-  "version": "0.2.9",
+  "version": "0.2.96",
   "description": "Chrome extension that groups tabs after inactivity.",
   "type": "module",
   "scripts": {

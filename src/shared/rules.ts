@@ -145,7 +145,21 @@ export function classifyTab(tab: chrome.tabs.Tab, settings: ExtensionSettings): 
   }
 
   const haystack = normalizeText(`${title} ${url}`);
-  const allRules = [...settings.customRules, ...PRESET_RULES.map(rule => ({ ...rule, id: rule.name }))];
+  const customRules = settings.customRules;
+  const presetRules = PRESET_RULES.map(rule => ({ ...rule, id: rule.name }));
+
+  if (settings.strategy !== "site") {
+    for (const rule of customRules) {
+      if (rule.keywords.some(keyword => haystack.includes(keyword.toLowerCase()))) {
+        return {
+          title: rule.name,
+          color: rule.color,
+          source: "rule",
+          key: `rule:${rule.id}`
+        };
+      }
+    }
+  }
 
   if (settings.strategy !== "subject") {
     const alias = findAliasForHostname(getHostname(url), settings.domainAliases);
@@ -160,7 +174,7 @@ export function classifyTab(tab: chrome.tabs.Tab, settings: ExtensionSettings): 
   }
 
   if (settings.strategy !== "site") {
-    for (const rule of allRules) {
+    for (const rule of presetRules) {
       if (rule.keywords.some(keyword => haystack.includes(keyword.toLowerCase()))) {
         return {
           title: rule.name,

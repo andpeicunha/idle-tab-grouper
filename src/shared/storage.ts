@@ -17,6 +17,11 @@ import type {
 const SETTINGS_KEY = "idle-tab-grouper-settings";
 const SESSION_KEY = "idle-tab-grouper-session";
 const RAM_SAVINGS_KEY = "idle-tab-grouper-ram-savings";
+const UI_PREFERENCES_KEY = "idle-tab-grouper-ui-preferences";
+
+export interface UiPreferencesState {
+  dismissChromeMemorySaverNotice: boolean;
+}
 
 export function getOptimizationPresetMinutes(preset: OptimizationPreset): number {
   return OPTIMIZATION_PRESETS.find(option => option.id === preset)?.inactivityMinutes ?? DEFAULT_SETTINGS.inactivityMinutes;
@@ -150,6 +155,28 @@ export async function ensureRamSavingsAnalytics(): Promise<void> {
   }
 }
 
+export async function readUiPreferences(): Promise<UiPreferencesState> {
+  const stored = await chrome.storage.local.get(UI_PREFERENCES_KEY);
+  return normalizeUiPreferences(stored[UI_PREFERENCES_KEY]);
+}
+
+export async function writeUiPreferences(state: Partial<UiPreferencesState>): Promise<UiPreferencesState> {
+  const normalized = normalizeUiPreferences(state);
+  await chrome.storage.local.set({
+    [UI_PREFERENCES_KEY]: normalized
+  });
+  return normalized;
+}
+
+export async function ensureUiPreferences(): Promise<void> {
+  const stored = await chrome.storage.local.get(UI_PREFERENCES_KEY);
+  if (!stored[UI_PREFERENCES_KEY]) {
+    await writeUiPreferences({
+      dismissChromeMemorySaverNotice: false
+    });
+  }
+}
+
 export async function recordRamSavings(input: RamSavingsRecordInput = {}): Promise<RamSavingsAnalyticsState> {
   const currentState = await readRamSavingsAnalytics();
   const timestamp = input.timestamp ?? Date.now();
@@ -186,6 +213,12 @@ export function normalizeRamSavingsAnalytics(
     version: 1,
     retentionDays,
     days: pruneRamSavingsDays(normalizeRamSavingsDays(days), retentionDays)
+  };
+}
+
+export function normalizeUiPreferences(state: Partial<UiPreferencesState> | null | undefined): UiPreferencesState {
+  return {
+    dismissChromeMemorySaverNotice: Boolean(state?.dismissChromeMemorySaverNotice)
   };
 }
 

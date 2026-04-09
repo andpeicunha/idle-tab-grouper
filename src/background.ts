@@ -8,6 +8,7 @@ import { classifyTab, getHostname, isIdle, normalizeDomain } from "./shared/rule
 import {
   ensureRamSavingsAnalytics,
   ensureSettings,
+  ensureUiPreferences,
   readSettings,
   readSession,
   recordRamSavings,
@@ -31,6 +32,7 @@ const ACTION_CONTEXTS = ["action"] as chrome.contextMenus.ContextType[];
 chrome.runtime.onInstalled.addListener(async () => {
   await ensureSettings();
   await ensureRamSavingsAnalytics();
+  await ensureUiPreferences();
   await ensureAlarm();
   await ensureContextMenus();
   await scanAndGroupTabs("install");
@@ -39,6 +41,7 @@ chrome.runtime.onInstalled.addListener(async () => {
 chrome.runtime.onStartup.addListener(async () => {
   await ensureSettings();
   await ensureRamSavingsAnalytics();
+  await ensureUiPreferences();
   await ensureAlarm();
   await ensureContextMenus();
 });
@@ -157,6 +160,8 @@ async function scanAndGroupTabs(reason: string): Promise<SessionSummary> {
   }
 
   const now = Date.now();
+  const shouldBypassGroupingIdleThreshold = reason === "manual";
+  const shouldForceGrouping = reason === "manual";
   const tabs = await chrome.tabs.query({});
   const groups = await chrome.tabGroups.query({});
   const groupsById = new Map(groups.map(group => [group.id, group]));
@@ -172,7 +177,7 @@ async function scanAndGroupTabs(reason: string): Promise<SessionSummary> {
 
   for (const tab of tabs) {
     if (!shouldConsiderTab(tab)) continue;
-    const groupIdle = isIdle(tab, now, settings.inactivityMinutes);
+    const groupIdle = shouldBypassGroupingIdleThreshold || isIdle(tab, now, settings.inactivityMinutes);
     const canDiscard = canDiscardWithSettings(tab, settings);
     const discardThreshold = canDiscard ? getEffectiveDiscardInactivityMinutes(tab, settings) : null;
     const discardIdle = discardThreshold != null && isIdle(tab, now, discardThreshold);
@@ -220,7 +225,7 @@ async function scanAndGroupTabs(reason: string): Promise<SessionSummary> {
       continue;
     }
 
-    if (settings.behavior === "suggest") {
+    if (settings.behavior === "suggest" && !shouldForceGrouping) {
       summary.suggestedCount += bucketTabs.length;
       for (const tab of bucketTabs) {
         await setSuggestionBadge(tab.id);
